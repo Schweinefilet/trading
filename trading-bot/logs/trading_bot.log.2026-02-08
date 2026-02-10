@@ -1,0 +1,232 @@
+{"timestamp": "2026-02-09T02:36:58.472954Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:36:58.473295Z", "level": "INFO", "logger": "trading_bot", "message": "Starting 24/5 Trading Bot"}
+{"timestamp": "2026-02-09T02:36:58.473439Z", "level": "INFO", "logger": "trading_bot", "message": "Mode: PAPER"}
+{"timestamp": "2026-02-09T02:36:58.473637Z", "level": "INFO", "logger": "trading_bot", "message": "Account Type: margin"}
+{"timestamp": "2026-02-09T02:36:58.473804Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:36:58.473911Z", "level": "INFO", "logger": "trading_bot", "message": "Initializing components..."}
+{"timestamp": "2026-02-09T02:36:58.779451Z", "level": "INFO", "logger": "trading_bot", "message": "Connected to Alpaca (paper)"}
+{"timestamp": "2026-02-09T02:36:58.779609Z", "level": "INFO", "logger": "trading_bot", "message": "Account equity: $10,246.30"}
+{"timestamp": "2026-02-09T02:36:58.803944Z", "level": "INFO", "logger": "trading_bot", "message": "Account equity: $10,246.30"}
+{"timestamp": "2026-02-09T02:36:58.827308Z", "level": "INFO", "logger": "trading_bot", "message": "Found 5 existing positions:"}
+{"timestamp": "2026-02-09T02:36:58.827487Z", "level": "INFO", "logger": "trading_bot", "message": "  AAPL: 25 shares @ $256.95"}
+{"timestamp": "2026-02-09T02:36:58.827625Z", "level": "INFO", "logger": "trading_bot", "message": "  AMD: 4 shares @ $210.36"}
+{"timestamp": "2026-02-09T02:36:58.827770Z", "level": "INFO", "logger": "trading_bot", "message": "  AVGO: 9 shares @ $342.94"}
+{"timestamp": "2026-02-09T02:36:58.827930Z", "level": "INFO", "logger": "trading_bot", "message": "  NVDA: 25 shares @ $189.18"}
+{"timestamp": "2026-02-09T02:36:58.828091Z", "level": "INFO", "logger": "trading_bot", "message": "  TSLA: 11 shares @ $425.83"}
+{"timestamp": "2026-02-09T02:36:58.852585Z", "level": "INFO", "logger": "trading_bot", "message": "Cancelling 2 stale orders..."}
+{"timestamp": "2026-02-09T02:36:58.876917Z", "level": "INFO", "logger": "trading_bot", "message": "Cancelled 2 orders"}
+{"timestamp": "2026-02-09T02:36:58.877105Z", "level": "INFO", "logger": "trading_bot", "message": "Loaded 10 symbols in static watchlist"}
+{"timestamp": "2026-02-09T02:36:58.877711Z", "level": "INFO", "logger": "trading_bot", "message": "Order sync loop started"}
+{"timestamp": "2026-02-09T02:36:58.877957Z", "level": "INFO", "logger": "trading_bot", "message": "Initialization complete"}
+{"timestamp": "2026-02-09T02:36:58.979135Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 5 positions"}
+{"timestamp": "2026-02-09T02:36:59.054013Z", "level": "INFO", "logger": "trading_bot", "message": "Not a trading day. Next trading day: 2026-02-09"}
+{"timestamp": "2026-02-09T02:36:59.054354Z", "level": "INFO", "logger": "trading_bot", "message": "Sleeping until 2026-02-09 04:00 ET"}
+{"timestamp": "2026-02-09T02:37:59.025256Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 5 positions"}
+{"timestamp": "2026-02-09T02:38:43.509645Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:38:43.509786Z", "level": "INFO", "logger": "trading_bot", "message": "Starting 24/5 Trading Bot"}
+{"timestamp": "2026-02-09T02:38:43.509871Z", "level": "INFO", "logger": "trading_bot", "message": "Mode: PAPER"}
+{"timestamp": "2026-02-09T02:38:43.509934Z", "level": "INFO", "logger": "trading_bot", "message": "Account Type: margin"}
+{"timestamp": "2026-02-09T02:38:43.509994Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:38:43.510052Z", "level": "INFO", "logger": "trading_bot", "message": "Initializing components..."}
+{"timestamp": "2026-02-09T02:38:43.765946Z", "level": "ERROR", "logger": "trading_bot", "message": "Failed to connect to Alpaca: {\"code\":40110000,\"message\":\"request is not authorized\"}"}
+{"timestamp": "2026-02-09T02:38:43.766812Z", "level": "ERROR", "logger": "trading_bot", "message": "Fatal error: Failed to connect to Alpaca API", "exception": "Traceback (most recent call last):\n  File \"E:\\trading\\trading-bot\\bot.py\", line 92, in start\n    await self._initialize()\n  File \"E:\\trading\\trading-bot\\bot.py\", line 119, in _initialize\n    raise RuntimeError(\"Failed to connect to Alpaca API\")\nRuntimeError: Failed to connect to Alpaca API"}
+{"timestamp": "2026-02-09T02:38:43.767242Z", "level": "INFO", "logger": "trading_bot", "message": "Shutting down..."}
+{"timestamp": "2026-02-09T02:38:43.767390Z", "level": "INFO", "logger": "trading_bot", "message": "Order sync loop stopped"}
+{"timestamp": "2026-02-09T02:38:43.785727Z", "level": "ERROR", "logger": "trading_bot", "message": "Failed to cancel all orders: {\"code\":40110000,\"message\":\"request is not authorized\"}"}
+{"timestamp": "2026-02-09T02:38:43.786005Z", "level": "INFO", "logger": "trading_bot", "message": "Shutdown complete"}
+{"timestamp": "2026-02-09T02:39:20.355130Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:39:20.355309Z", "level": "INFO", "logger": "trading_bot", "message": "Starting 24/5 Trading Bot"}
+{"timestamp": "2026-02-09T02:39:20.355549Z", "level": "INFO", "logger": "trading_bot", "message": "Mode: PAPER"}
+{"timestamp": "2026-02-09T02:39:20.355688Z", "level": "INFO", "logger": "trading_bot", "message": "Account Type: margin"}
+{"timestamp": "2026-02-09T02:39:20.355823Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:39:20.355958Z", "level": "INFO", "logger": "trading_bot", "message": "Initializing components..."}
+{"timestamp": "2026-02-09T02:39:20.611616Z", "level": "ERROR", "logger": "trading_bot", "message": "Failed to connect to Alpaca: {\"code\":40110000,\"message\":\"request is not authorized\"}"}
+{"timestamp": "2026-02-09T02:39:20.612556Z", "level": "ERROR", "logger": "trading_bot", "message": "Fatal error: Failed to connect to Alpaca API", "exception": "Traceback (most recent call last):\n  File \"E:\\trading\\trading-bot\\bot.py\", line 92, in start\n    await self._initialize()\n  File \"E:\\trading\\trading-bot\\bot.py\", line 119, in _initialize\n    raise RuntimeError(\"Failed to connect to Alpaca API\")\nRuntimeError: Failed to connect to Alpaca API"}
+{"timestamp": "2026-02-09T02:39:20.612994Z", "level": "INFO", "logger": "trading_bot", "message": "Shutting down..."}
+{"timestamp": "2026-02-09T02:39:20.613247Z", "level": "INFO", "logger": "trading_bot", "message": "Order sync loop stopped"}
+{"timestamp": "2026-02-09T02:39:20.633528Z", "level": "ERROR", "logger": "trading_bot", "message": "Failed to cancel all orders: {\"code\":40110000,\"message\":\"request is not authorized\"}"}
+{"timestamp": "2026-02-09T02:39:20.633766Z", "level": "INFO", "logger": "trading_bot", "message": "Shutdown complete"}
+{"timestamp": "2026-02-09T02:41:22.965045Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:41:22.965292Z", "level": "INFO", "logger": "trading_bot", "message": "Starting 24/5 Trading Bot"}
+{"timestamp": "2026-02-09T02:41:22.965495Z", "level": "INFO", "logger": "trading_bot", "message": "Mode: LIVE"}
+{"timestamp": "2026-02-09T02:41:22.965632Z", "level": "INFO", "logger": "trading_bot", "message": "Account Type: margin"}
+{"timestamp": "2026-02-09T02:41:22.965731Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:41:22.965887Z", "level": "INFO", "logger": "trading_bot", "message": "Initializing components..."}
+{"timestamp": "2026-02-09T02:41:23.254350Z", "level": "INFO", "logger": "trading_bot", "message": "Connected to Alpaca (live)"}
+{"timestamp": "2026-02-09T02:41:23.254604Z", "level": "INFO", "logger": "trading_bot", "message": "Account equity: $50.00"}
+{"timestamp": "2026-02-09T02:41:23.277111Z", "level": "INFO", "logger": "trading_bot", "message": "Account equity: $50.00"}
+{"timestamp": "2026-02-09T02:41:23.338348Z", "level": "INFO", "logger": "trading_bot", "message": "Loaded 10 symbols in static watchlist"}
+{"timestamp": "2026-02-09T02:41:23.339215Z", "level": "INFO", "logger": "trading_bot", "message": "Order sync loop started"}
+{"timestamp": "2026-02-09T02:41:23.339535Z", "level": "INFO", "logger": "trading_bot", "message": "Initialization complete"}
+{"timestamp": "2026-02-09T02:41:23.390733Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:41:23.505950Z", "level": "INFO", "logger": "trading_bot", "message": "Not a trading day. Next trading day: 2026-02-09"}
+{"timestamp": "2026-02-09T02:41:23.506149Z", "level": "INFO", "logger": "trading_bot", "message": "Sleeping until 2026-02-09 04:00 ET"}
+{"timestamp": "2026-02-09T02:42:23.426678Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:43:23.455812Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:44:23.492608Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:45:23.525520Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:46:23.550026Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:46:45.330597Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:46:45.330740Z", "level": "INFO", "logger": "trading_bot", "message": "Starting 24/5 Trading Bot"}
+{"timestamp": "2026-02-09T02:46:45.330848Z", "level": "INFO", "logger": "trading_bot", "message": "Mode: LIVE"}
+{"timestamp": "2026-02-09T02:46:45.330976Z", "level": "INFO", "logger": "trading_bot", "message": "Account Type: margin"}
+{"timestamp": "2026-02-09T02:46:45.331090Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:46:45.331189Z", "level": "INFO", "logger": "trading_bot", "message": "Initializing components..."}
+{"timestamp": "2026-02-09T02:46:45.604815Z", "level": "INFO", "logger": "trading_bot", "message": "Connected to Alpaca (live)"}
+{"timestamp": "2026-02-09T02:46:45.605086Z", "level": "INFO", "logger": "trading_bot", "message": "Account equity: $50.00"}
+{"timestamp": "2026-02-09T02:46:45.627827Z", "level": "INFO", "logger": "trading_bot", "message": "Account equity: $50.00"}
+{"timestamp": "2026-02-09T02:46:45.673208Z", "level": "INFO", "logger": "trading_bot", "message": "Loaded 33 symbols in static watchlist"}
+{"timestamp": "2026-02-09T02:46:45.673943Z", "level": "INFO", "logger": "trading_bot", "message": "Order sync loop started"}
+{"timestamp": "2026-02-09T02:46:45.674163Z", "level": "INFO", "logger": "trading_bot", "message": "Initialization complete"}
+{"timestamp": "2026-02-09T02:46:45.730630Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:46:45.853357Z", "level": "INFO", "logger": "trading_bot", "message": "Not a trading day. Next trading day: 2026-02-09"}
+{"timestamp": "2026-02-09T02:46:45.853567Z", "level": "INFO", "logger": "trading_bot", "message": "Sleeping until 2026-02-09 04:00 ET"}
+{"timestamp": "2026-02-09T02:47:45.764156Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:48:45.798593Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:49:45.829353Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:50:45.868740Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:51:45.911187Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:52:45.938887Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:53:14.496655Z", "level": "INFO", "logger": "trading_bot", "message": "Received signal 2, initiating graceful shutdown..."}
+{"timestamp": "2026-02-09T02:53:15.886851Z", "level": "INFO", "logger": "trading_bot", "message": "Received signal 2, initiating graceful shutdown..."}
+{"timestamp": "2026-02-09T02:53:47.626534Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:53:47.626679Z", "level": "INFO", "logger": "trading_bot", "message": "Starting 24/5 Trading Bot"}
+{"timestamp": "2026-02-09T02:53:47.626771Z", "level": "INFO", "logger": "trading_bot", "message": "Mode: LIVE"}
+{"timestamp": "2026-02-09T02:53:47.626833Z", "level": "INFO", "logger": "trading_bot", "message": "Account Type: margin"}
+{"timestamp": "2026-02-09T02:53:47.626893Z", "level": "INFO", "logger": "trading_bot", "message": "============================================================"}
+{"timestamp": "2026-02-09T02:53:47.626950Z", "level": "INFO", "logger": "trading_bot", "message": "Initializing components..."}
+{"timestamp": "2026-02-09T02:53:47.915784Z", "level": "INFO", "logger": "trading_bot", "message": "Connected to Alpaca (live)"}
+{"timestamp": "2026-02-09T02:53:47.916080Z", "level": "INFO", "logger": "trading_bot", "message": "Account equity: $50.00"}
+{"timestamp": "2026-02-09T02:53:47.939826Z", "level": "INFO", "logger": "trading_bot", "message": "Account equity: $50.00"}
+{"timestamp": "2026-02-09T02:53:47.983426Z", "level": "INFO", "logger": "trading_bot", "message": "Loaded 33 symbols in static watchlist"}
+{"timestamp": "2026-02-09T02:53:47.984043Z", "level": "INFO", "logger": "trading_bot", "message": "Order sync loop started"}
+{"timestamp": "2026-02-09T02:53:47.984227Z", "level": "INFO", "logger": "trading_bot", "message": "Initialization complete"}
+{"timestamp": "2026-02-09T02:53:48.063170Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:53:48.150673Z", "level": "INFO", "logger": "trading_bot", "message": "Not a trading day. Next trading day: 2026-02-09"}
+{"timestamp": "2026-02-09T02:53:48.150997Z", "level": "INFO", "logger": "trading_bot", "message": "Sleeping until 2026-02-09 04:00 ET"}
+{"timestamp": "2026-02-09T02:54:48.083587Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:55:48.124714Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:56:48.166120Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:57:48.196559Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:58:48.233536Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T02:59:48.267475Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:00:48.306483Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:01:48.340801Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:02:48.378076Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:03:48.402146Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:04:48.437003Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:05:48.471494Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:06:48.500410Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:07:48.534951Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:08:48.562942Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:09:48.587101Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:10:48.616471Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:11:48.648814Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:12:48.674181Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:13:48.711848Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:14:48.734309Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:15:48.767587Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:16:48.791565Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:17:48.829419Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:18:48.864405Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:19:48.890448Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:20:48.916545Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:21:48.946434Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:22:48.973627Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:23:48.999348Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:24:49.022907Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:25:49.054515Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:26:49.078062Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:27:49.109478Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:28:49.133523Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:29:49.163142Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:30:49.190893Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:31:49.215466Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:32:49.241419Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:33:49.275394Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:34:49.310170Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:35:49.336717Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:36:49.369996Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:37:49.396889Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:38:49.431264Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:39:49.460178Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:40:49.490608Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:41:49.517433Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:42:49.544143Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:43:49.581818Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:44:49.616135Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:45:49.648085Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:46:49.673011Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:47:49.704040Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:48:49.739987Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:49:49.763485Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:50:49.802779Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:51:49.832943Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:52:49.861448Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:53:49.895141Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:54:50.482448Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:55:50.518251Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:56:50.547264Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:57:50.577786Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:58:50.611565Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T03:59:50.642523Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:00:50.679562Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:01:50.716331Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:02:50.738851Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:03:50.769476Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:04:50.805943Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:05:50.838207Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:06:50.876229Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:07:50.914803Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:08:50.942719Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:09:50.978212Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:10:51.009595Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:11:51.040254Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:12:51.073956Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:13:51.109070Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:14:51.141667Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:15:51.167291Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:16:51.232340Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:17:51.257478Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:18:51.291400Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:19:51.318255Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:20:51.346838Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:21:51.379362Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:22:51.413186Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:23:51.440310Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:24:51.476306Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:25:51.502736Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:26:51.539971Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:27:51.568801Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:28:51.597380Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:29:51.634630Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:30:51.658579Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:31:51.681031Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:32:51.734426Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:33:51.764411Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:34:51.795282Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:35:51.821447Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:36:51.849419Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:37:51.882161Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:38:51.907090Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:39:51.933016Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:40:51.966744Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:41:52.006573Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:42:52.031475Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:43:52.057951Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:44:52.090127Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:45:52.123197Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:46:52.150493Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:47:52.184188Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:48:52.209176Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:49:52.232184Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:50:52.259864Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:51:52.293381Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:52:52.328034Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:53:52.351878Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:54:52.380577Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:55:53.174731Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:56:53.206688Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:57:53.230297Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:58:53.269905Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}
+{"timestamp": "2026-02-09T04:59:53.298300Z", "level": "DEBUG", "logger": "trading_bot", "message": "Synced 0 positions"}

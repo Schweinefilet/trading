@@ -1,0 +1,96 @@
+
+=== DIAGNOSTIC: Testing 5 symbols ===
+Symbols: ['LRN', 'ABT', 'STX', 'MA', 'NVDA']
+MIN_VOLUME setting: 500000
+MIN_VOLUME / 2 (actual threshold): 250000.0
+EMA_FAST: 9, EMA_SLOW: 21
+RSI_PERIOD: 14, ATR_PERIOD: 14
+Min bars needed: 31
+
+
+--- LRN ---
+  OK Got 100 bars
+  Date range: 2026-02-09 14:30:00+00:00 to 2026-02-09 16:19:00+00:00
+  Last close: $83.72
+  EMA9=84.0659, EMA21=84.3324
+  RSI=21.7, ATR=0.1621
+  Price=83.72
+  EMA fast > slow: False
+  Price > EMA fast: False
+  RSI in range (35-70): False
+  >>> Avg 1-min bar volume: 3,224
+  >>> Volume threshold (MIN_VOLUME/2): 250,000
+  >>> Volume PASSES: False
+  >>> !!! THIS IS WHY NO SIGNALS - volume too low for 1-min bars !!!
+  Signal: HOLD (confidence: 0%)
+  Reason: No entry conditions met
+
+--- ABT ---
+  OK Got 100 bars
+  Date range: 2026-02-09 09:59:00+00:00 to 2026-02-09 15:54:00+00:00
+  Last close: $110.29
+  EMA9=110.3476, EMA21=110.3885
+  RSI=42.6, ATR=0.1044
+  Price=110.29
+  EMA fast > slow: False
+  Price > EMA fast: False
+  RSI in range (35-70): True
+  >>> Avg 1-min bar volume: 17,196
+  >>> Volume threshold (MIN_VOLUME/2): 250,000
+  >>> Volume PASSES: False
+  >>> !!! THIS IS WHY NO SIGNALS - volume too low for 1-min bars !!!
+  Signal: HOLD (confidence: 0%)
+  Reason: No entry conditions met
+
+--- STX ---
+  OK Got 100 bars
+  Date range: 2026-02-09 09:16:00+00:00 to 2026-02-09 15:26:00+00:00
+  Last close: $429.01
+  EMA9=429.7639, EMA21=429.4653
+  RSI=49.5, ATR=1.7135
+  Price=429.01
+  EMA fast > slow: True
+  Price > EMA fast: False
+  RSI in range (35-70): True
+  >>> Avg 1-min bar volume: 10,089
+  >>> Volume threshold (MIN_VOLUME/2): 250,000
+  >>> Volume PASSES: False
+  >>> !!! THIS IS WHY NO SIGNALS - volume too low for 1-min bars !!!
+  Signal: BUY (confidence: 85%)
+  Reason: BUY: EMA9=429.76>EMA21=429.47, RSI=49, ATR=1.7135
+
+--- MA ---
+  OK Got 100 bars
+  Date range: 2026-02-09 12:04:00+00:00 to 2026-02-09 16:01:00+00:00
+  Last close: $537.58
+  EMA9=537.4409, EMA21=537.5500
+  RSI=49.8, ATR=0.4851
+  Price=537.58
+  EMA fast > slow: False
+  Price > EMA fast: True
+  RSI in range (35-70): True
+  >>> Avg 1-min bar volume: 9,184
+  >>> Volume threshold (MIN_VOLUME/2): 250,000
+  >>> Volume PASSES: False
+  >>> !!! THIS IS WHY NO SIGNALS - volume too low for 1-min bars !!!
+  Signal: HOLD (confidence: 0%)
+  Reason: No entry conditions met
+
+--- NVDA ---
+  OK Got 100 bars
+  Date range: 2026-02-09 09:00:00+00:00 to 2026-02-09 10:41:00+00:00
+  Last close: $183.20
+  EMA9=183.2288, EMA21=183.2994
+  RSI=44.5, ATR=0.1500
+  Price=183.20
+  EMA fast > slow: False
+  Price > EMA fast: False
+  RSI in range (35-70): True
+  >>> Avg 1-min bar volume: 6,387
+  >>> Volume threshold (MIN_VOLUME/2): 250,000
+  >>> Volume PASSES: False
+  >>> !!! THIS IS WHY NO SIGNALS - volume too low for 1-min bars !!!
+  Signal: HOLD (confidence: 0%)
+  Reason: No entry conditions met
+
+=== DIAGNOSTIC COMPLETE ===
