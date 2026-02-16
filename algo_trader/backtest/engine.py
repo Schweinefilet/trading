@@ -301,14 +301,7 @@ class BacktestEngine:
                 elif regime == "BEARISH" and sig["direction"] == "LONG":
                     regime_mult = 0.50
 
-                # QQQ Directional Risk (Phase 6)
-                qqq_mult = 1.0
-                if "QQQ" in bar_data and ts in bar_data["QQQ"].index:
-                    qqq_bar = bar_data["QQQ"].loc[ts]
-                    if qqq_bar["ema_fast"] < qqq_bar["ema_slow"]:
-                        qqq_mult = self.cfg.QQQ_RISK_REDUCTION_BEARISH
-
-                risk_amount = equity * self.cfg.RISK_PER_TRADE_PCT * dd_mult * regime_mult * qqq_mult
+                risk_amount = equity * self.cfg.RISK_PER_TRADE_PCT * dd_mult * regime_mult
                 shares = max(1, math.floor(risk_amount / stop_distance))
 
                 # Cap: max 25% of equity
@@ -340,9 +333,6 @@ class BacktestEngine:
                     shares = int(self.cash / actual_entry)
                     cost_basis = shares * actual_entry
 
-                # Enforce Minimum Position Value (Phase 6b)
-                if cost_basis < self.cfg.MIN_POSITION_VAL:
-                    continue
 
                 if shares < 1:
                     continue
@@ -496,17 +486,6 @@ class BacktestEngine:
                 if low <= trail_stop:
                     return True, trail_stop, "trailing_stop"
             
-            # Break-even guardrail (Phase 6)
-            hold_time = bar.name - pos["entry_time"]
-            if hold_time >= timedelta(minutes=self.cfg.BREAK_EVEN_MIN_HOLD_MINS):
-                profit_atr = (highest - pos["entry_price"]) / pos["atr"]
-                if profit_atr >= self.cfg.BREAK_EVEN_ACTIVATE_ATR:
-                    be_price = pos["entry_price"] + (pos["atr"] * self.cfg.BREAK_EVEN_OFFSET_ATR)
-                    if pos["stop_price"] < be_price:
-                        pos["stop_price"] = be_price
-                        # Check if current low also hits this new stop
-                        if low <= be_price:
-                            return True, be_price, "break_even"
             
             # Update highest for trailing
             pos["highest_price"] = max(highest, high)
@@ -525,16 +504,6 @@ class BacktestEngine:
                 if high >= trail_stop:
                     return True, trail_stop, "trailing_stop"
             
-            # Break-even guardrail (Phase 6)
-            hold_time = bar.name - pos["entry_time"]
-            if hold_time >= timedelta(minutes=self.cfg.BREAK_EVEN_MIN_HOLD_MINS):
-                profit_atr = (pos["entry_price"] - lowest) / pos["atr"]
-                if profit_atr >= self.cfg.BREAK_EVEN_ACTIVATE_ATR:
-                    be_price = pos["entry_price"] - (pos["atr"] * self.cfg.BREAK_EVEN_OFFSET_ATR)
-                    if pos["stop_price"] > be_price:
-                        pos["stop_price"] = be_price
-                        if high >= be_price:
-                            return True, be_price, "break_even"
             
             pos["lowest_price"] = min(lowest, low)
 
@@ -556,29 +525,12 @@ class BacktestEngine:
         # Slippage + Spread
         execution_cost = exit_price * self.cfg.SLIPPAGE_PCT + self.cfg.SPREAD_COST_PER_SHARE
         
-        # Regulatory Fees (Sell-side triggers only)
-        # SEC: ~ $27.80 per $1M sales (0.0000278)
-        # FINRA TAF: $0.000166 per share (max $8.30)
-        reg_fees = 0.0
         if pos["direction"] == "LONG":
-            # Sell to close
-            sec_fee = (exit_price * shares) * self.cfg.SEC_FEE_RATE
-            finra_taf = min(shares * self.cfg.FINRA_TAF_RATE, self.cfg.FINRA_TAF_CAP)
-            reg_fees = sec_fee + finra_taf
-            
             actual_exit = exit_price - execution_cost
-            pnl = (actual_exit - entry_price) * shares - reg_fees
+            pnl = (actual_exit - entry_price) * shares
         else:
-            # Buy to cover (Short entry was the sell)
-            # Short entry should have recorded reg fees. 
-            # For simplicity in backtest, we apply fees to the 'sell' side.
-            # In SHORT, entry was the sell.
-            sec_fee = (entry_price * shares) * self.cfg.SEC_FEE_RATE
-            finra_taf = min(shares * self.cfg.FINRA_TAF_RATE, self.cfg.FINRA_TAF_CAP)
-            reg_fees = sec_fee + finra_taf
-            
             actual_exit = exit_price + execution_cost
-            pnl = (entry_price - actual_exit) * shares - reg_fees
+            pnl = (entry_price - actual_exit) * shares
 
         # Update cash (return cost basis + PnL)
         cost_basis = entry_price * shares

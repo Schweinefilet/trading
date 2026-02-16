@@ -72,13 +72,13 @@ class TradingConfig:
     TRAILING_STOP_ACTIVATE_ATR: float = 2.0
     TRAILING_STOP_ATR: float = 1.5
     
-    # Break-Even Guardrail (Phase 6)
-    BREAK_EVEN_ACTIVATE_ATR: float = 1.2    # Move SL to break-even after 1.2x ATR profit
-    BREAK_EVEN_OFFSET_ATR: float = 0.2      # Set SL to Entry + 0.2x ATR (covering costs)
-    BREAK_EVEN_MIN_HOLD_MINS: int = 30      # Only engage after 30 minutes
+    # Break-Even Guardrail (Phase 6 - DISCONTINUED)
+    BREAK_EVEN_ACTIVATE_ATR: float = 999.0  # High to disable
+    BREAK_EVEN_OFFSET_ATR: float = 0.0
+    BREAK_EVEN_MIN_HOLD_MINS: int = 999
     
-    # QQQ Directional Risk (Phase 6)
-    QQQ_RISK_REDUCTION_BEARISH: float = 0.5 # Slow down to 50% size if QQQ is bearish
+    # QQQ Directional Risk (Phase 6 - DISCONTINUED)
+    QQQ_RISK_REDUCTION_BEARISH: float = 1.0 # 1.0 = No reduction
     
     TIME_STOP_MINUTES_BEFORE_CLOSE: int = 15
 
@@ -118,12 +118,12 @@ class TradingConfig:
     BACKTEST_END: str = "2025-12-31"
     SLIPPAGE_PCT: float = 0.0005           # 0.05% per side
     SPREAD_COST_PER_SHARE: float = 0.02    # $0.02 average spread
-    MIN_POSITION_VAL: float = 1000.0       # Ignore signals that would result in <$1000 pos
+    MIN_POSITION_VAL: float = 0.0          # REVERTED: Allow all sizes
     
-    # Regulatory Fees (Sell-side only)
-    SEC_FEE_RATE: float = 0.0000278        # $27.80 per $1M
-    FINRA_TAF_RATE: float = 0.000166       # $0.000166 per share
-    FINRA_TAF_CAP: float = 8.30            # Max $8.30 per trade
+    # Regulatory Fees (Sell-side only) - REVERTED
+    SEC_FEE_RATE: float = 0.0
+    FINRA_TAF_RATE: float = 0.0
+    FINRA_TAF_CAP: float = 0.0
     WALK_FORWARD_IN_SAMPLE_DAYS: int = 90
     WALK_FORWARD_OUT_SAMPLE_DAYS: int = 30
     WALK_FORWARD_STEP_DAYS: int = 30
