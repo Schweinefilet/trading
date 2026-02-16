@@ -292,33 +292,38 @@ class BacktestEngine:
                 stop_price = sig["stop_price"]
                 atr = sig["atr"]
 
-                stop_distance = abs(entry_price - stop_price)
-                if stop_distance <= 0:
-                    continue
+                if self.cfg.USE_RISK_BASED_SIZING:
+                    # Risk-based sizing (1% risk per trade)
+                    stop_distance = abs(entry_price - stop_price)
+                    if stop_distance <= 0:
+                        continue
 
-                # Drawdown sizing
-                dd_mult = 1.0
-                if peak_equity > 0:
-                    dd = (peak_equity - equity) / peak_equity
-                    if dd >= 0.10:
-                        dd_mult = 0.50
-                    elif dd >= 0.05:
-                        dd_mult = 0.75
+                    # Drawdown sizing
+                    dd_mult = 1.0
+                    if peak_equity > 0:
+                        dd = (peak_equity - equity) / peak_equity
+                        if dd >= 0.10:
+                            dd_mult = 0.50
+                        elif dd >= 0.05:
+                            dd_mult = 0.75
 
-                # Regime sizing
-                regime_mult = 1.0
-                if regime == "CAUTIOUS" and sig["direction"] == "LONG":
-                    regime_mult = 0.75
-                elif regime == "BEARISH" and sig["direction"] == "LONG":
-                    regime_mult = 0.50
+                    # Regime sizing
+                    regime_mult = 1.0
+                    if regime == "CAUTIOUS" and sig["direction"] == "LONG":
+                        regime_mult = 0.75
+                    elif regime == "BEARISH" and sig["direction"] == "LONG":
+                        regime_mult = 0.50
 
-                # QQQ directional risk sizing (Phase 6A)
-                qqq_mult = 1.0
-                if ts in qqq_trend_bullish and not qqq_trend_bullish[ts]:
-                    qqq_mult = self.cfg.QQQ_RISK_REDUCTION_BEARISH
+                    # QQQ directional risk sizing
+                    qqq_mult = 1.0
+                    if ts in qqq_trend_bullish and not qqq_trend_bullish[ts]:
+                        qqq_mult = self.cfg.QQQ_RISK_REDUCTION_BEARISH
 
-                risk_amount = equity * self.cfg.RISK_PER_TRADE_PCT * dd_mult * regime_mult * qqq_mult
-                shares = max(1, math.floor(risk_amount / stop_distance))
+                    risk_amount = equity * self.cfg.RISK_PER_TRADE_PCT * dd_mult * regime_mult * qqq_mult
+                    shares = max(1, math.floor(risk_amount / stop_distance))
+                else:
+                    # Fixed-dollar sizing
+                    shares = max(1, math.floor(self.cfg.FIXED_POSITION_DOLLAR / entry_price))
 
                 # Cap: max 25% of equity
                 max_shares = math.floor(equity * self.cfg.MAX_POSITION_PCT / entry_price)
@@ -490,7 +495,8 @@ class BacktestEngine:
         if pos["direction"] == "LONG":
             # Stop loss hit
             if low <= pos["stop_price"]:
-                return True, pos["stop_price"], "stop_loss"
+                reason = "break_even" if pos.get("break_even_set") else "stop_loss"
+                return True, pos["stop_price"], reason
             # Take profit hit
             if high >= pos["take_profit"]:
                 return True, pos["take_profit"], "take_profit"
@@ -524,7 +530,8 @@ class BacktestEngine:
         else:
             # SHORT logic
             if high >= pos["stop_price"]:
-                return True, pos["stop_price"], "stop_loss"
+                reason = "break_even" if pos.get("break_even_set") else "stop_loss"
+                return True, pos["stop_price"], reason
             if low <= pos["take_profit"]:
                 return True, pos["take_profit"], "take_profit"
             
@@ -567,14 +574,22 @@ class BacktestEngine:
 
         # Apply exit costs
         # Slippage + Spread
-        execution_cost = exit_price * self.cfg.SLIPPAGE_PCT + self.cfg.SPREAD_COST_PER_SHARE
+        execution_cost_per_share = exit_price * self.cfg.SLIPPAGE_PCT + self.cfg.SPREAD_COST_PER_SHARE
         
         if pos["direction"] == "LONG":
-            actual_exit = exit_price - execution_cost
-            pnl = (actual_exit - entry_price) * shares
+            actual_exit = exit_price - execution_cost_per_share
+            gross_pnl = (actual_exit - entry_price) * shares
         else:
-            actual_exit = exit_price + execution_cost
-            pnl = (entry_price - actual_exit) * shares
+            actual_exit = exit_price + execution_cost_per_share
+            gross_pnl = (entry_price - actual_exit) * shares
+
+        # Regulatory Fees (Sell-side only)
+        exit_proceeds = shares * actual_exit
+        sec_fee = math.ceil(exit_proceeds * self.cfg.SEC_FEE_RATE * 100) / 100
+        finra_taf = min(math.ceil(shares * self.cfg.FINRA_TAF_RATE * 100) / 100, self.cfg.FINRA_TAF_CAP)
+        total_fees = sec_fee + finra_taf
+        
+        pnl = gross_pnl - total_fees
 
         # Update cash (return cost basis + PnL)
         cost_basis = entry_price * shares
@@ -601,7 +616,7 @@ class BacktestEngine:
         self.trades.append(trade)
 
         if self.verbose:
-             print(f"  {exit_time} | EXIT {pos['direction']} {symbol} @ ${actual_exit:.2f} | PnL=${pnl:.2f} ({reason})")
+             print(f"  {exit_time} | EXIT {pos['direction']} {shares} {symbol} @ ${actual_exit:.2f} | Gross=${gross_pnl:.2f} | Fees=${total_fees:.2f} | Net PnL=${pnl:.2f} ({reason})")
 
         # Record day trade for PDT tracking
         if pos.get("is_day_trade", True):

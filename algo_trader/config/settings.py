@@ -91,6 +91,10 @@ class TradingConfig:
     MAX_POSITIONS: int = 4
     MAX_SAME_SECTOR: int = 2
     MAX_CAPITAL_DEPLOYED_PCT: float = 0.70 # Keep 30% cash buffer
+    
+    # Position Sizing Toggle (Phase 6B)
+    USE_RISK_BASED_SIZING: bool = False     # If False, use FIXED_POSITION_DOLLAR
+    FIXED_POSITION_DOLLAR: float = 3000.0  # Normalized dollar amount per trade
 
     # === DRAWDOWN / CIRCUIT BREAKERS ===
     DAILY_LOSS_LIMIT_PCT: float = 0.03     # 3% daily loss → halt trading
@@ -122,10 +126,10 @@ class TradingConfig:
     SPREAD_COST_PER_SHARE: float = 0.02    # $0.02 average spread
     MIN_POSITION_VAL: float = 0.0          # REVERTED: Allow all sizes
     
-    # Regulatory Fees (Sell-side only) - REVERTED
-    SEC_FEE_RATE: float = 0.0
-    FINRA_TAF_RATE: float = 0.0
-    FINRA_TAF_CAP: float = 0.0
+    # Regulatory Fees (Sell-side only)
+    SEC_FEE_RATE: float = 0.0000278        # SEC Section 31 fee
+    FINRA_TAF_RATE: float = 0.000166       # FINRA Trading Activity Fee
+    FINRA_TAF_CAP: float = 8.30            # Cap per trade
     WALK_FORWARD_IN_SAMPLE_DAYS: int = 90
     WALK_FORWARD_OUT_SAMPLE_DAYS: int = 30
     WALK_FORWARD_STEP_DAYS: int = 30
