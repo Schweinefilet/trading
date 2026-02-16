@@ -26,9 +26,9 @@ def calculate_ema(
         DataFrame with EMA columns added
     """
     if fast_period is None:
-        fast_period = settings.EMA_FAST
+        fast_period = getattr(settings, "SWING_EMA_TREND", 50)
     if slow_period is None:
-        slow_period = settings.EMA_SLOW
+        slow_period = 200
     
     result = df.copy()
     result[f"ema_{fast_period}"] = ta.ema(df[column], length=fast_period)
@@ -54,7 +54,7 @@ def calculate_rsi(
         DataFrame with RSI column added
     """
     if period is None:
-        period = settings.RSI_PERIOD
+        period = getattr(settings, "SWING_RSI_PERIOD", 14)
     
     result = df.copy()
     result["rsi"] = ta.rsi(df[column], length=period)
@@ -135,7 +135,7 @@ def calculate_atr(
         DataFrame with ATR column added
     """
     if period is None:
-        period = settings.ATR_PERIOD
+        period = getattr(settings, "SWING_ATR_PERIOD", 14)
     
     result = df.copy()
     result["atr"] = ta.atr(df["high"], df["low"], df["close"], length=period)
@@ -149,6 +149,9 @@ def calculate_all_indicators(
     ema_slow: int = None,
     rsi_period: int = None,
     atr_period: int = None,
+    macd_fast: int = None,
+    macd_slow: int = None,
+    macd_signal: int = None,
 ) -> pd.DataFrame:
     """
     Calculate all technical indicators needed for the strategy.
@@ -164,13 +167,19 @@ def calculate_all_indicators(
         DataFrame with all indicator columns added
     """
     if ema_fast is None:
-        ema_fast = settings.EMA_FAST
+        ema_fast = getattr(settings, "SWING_EMA_TREND", 50)
     if ema_slow is None:
-        ema_slow = settings.EMA_SLOW
+        ema_slow = 200 # Standard long-term EMA
     if rsi_period is None:
-        rsi_period = settings.RSI_PERIOD
+        rsi_period = getattr(settings, "SWING_RSI_PERIOD", 14)
     if atr_period is None:
-        atr_period = settings.ATR_PERIOD
+        atr_period = getattr(settings, "SWING_ATR_PERIOD", 14)
+    if macd_fast is None:
+        macd_fast = 12
+    if macd_slow is None:
+        macd_slow = 26
+    if macd_signal is None:
+        macd_signal = 9
     
     result = df.copy()
     
@@ -187,14 +196,17 @@ def calculate_all_indicators(
         result["vwap"] = (typical_price * result["volume"]).cumsum() / result["volume"].cumsum()
     
     # MACD
-    macd_result = ta.macd(result["close"], fast=12, slow=26, signal=9)
+    macd_result = ta.macd(result["close"], fast=macd_fast, slow=macd_slow, signal=macd_signal)
     if macd_result is not None:
-        result["macd"] = macd_result["MACD_12_26_9"]
-        result["macd_signal"] = macd_result["MACDs_12_26_9"]
-        result["macd_hist"] = macd_result["MACDh_12_26_9"]
+        result["macd"] = macd_result[f"MACD_{macd_fast}_{macd_slow}_{macd_signal}"]
+        result["macd_signal"] = macd_result[f"MACDs_{macd_fast}_{macd_slow}_{macd_signal}"]
+        result["macd_hist"] = macd_result[f"MACDh_{macd_fast}_{macd_slow}_{macd_signal}"]
     
     # ATR
     result["atr"] = ta.atr(result["high"], result["low"], result["close"], length=atr_period)
+    
+    # MA5 (Simple Moving Average for Scalp Exits)
+    result["ma_5"] = ta.sma(result["close"], length=5)
     
     return result
 

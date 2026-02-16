@@ -125,31 +125,58 @@ class RiskManager:
         """
         Calculate position size based on risk parameters and confidence.
         
-        Formula: 
-        1. Risk Amount = Portfolio * Risk% * Confidence
-        2. Shares = Risk Amount / (Entry - Stop)
-        3. Cap at Max Position Size (20% of Portfolio)
+        For opening scalps (ENABLE_OPENING_SCALP=True):
+            Uses conviction (confidence) as direct % of equity.
+            conviction=0.4 → 40% of equity, conviction=1.0 → 100% (ALL-IN)
+        
+        For swing trades:
+            Uses risk-based sizing capped at MAX_POSITION_PCT.
         
         Args:
             entry_price: Planned entry price
             stop_loss: Planned stop-loss price
-            confidence: Confidence score (0.5 to 1.0)
+            confidence: Conviction score (0.4 to 1.0 for scalps)
             
         Returns:
             Number of shares to buy (integer)
         """
-        # 1. Determine dollar risk
-        base_risk_pct = self.config.PER_TRADE_RISK_PCT  # e.g., 0.02 (2%)
+        if entry_price <= 0:
+            return 0
+        
+        # For opening scalps: conviction-based sizing (0.4 = 40%, 1.0 = 100%)
+        if self.config.ENABLE_OPENING_SCALP and confidence >= 0.4:
+            # Position value = equity × conviction
+            position_value = self._current_equity * confidence
+            
+            # Safety cap at MAX_POSITION_PCT (should be 1.0 for all-in capability)
+            max_value = self._current_equity * self.config.MAX_POSITION_PCT
+            position_value = min(position_value, max_value)
+            
+            # Check existing exposure — don't exceed total equity
+            current_exposure = sum(p.get("value", 0) for p in self._positions.values())
+            available = self._current_equity - current_exposure
+            if position_value > available:
+                position_value = max(available, 0)
+            
+            shares = int(position_value / entry_price)
+            if shares == 0 and position_value > entry_price:
+                shares = 1
+            
+            logger.info(f"Scalp sizing: {confidence*100:.0f}% conviction → ${position_value:,.0f} position → {shares} shares @ ${entry_price:.2f}")
+            return shares
+        
+        # For swing trades: risk-based sizing
+        base_risk_pct = self.config.PER_TRADE_RISK_PCT
         risk_amount = self._current_equity * base_risk_pct * confidence
         
-        # 2. Calculate risk per share
+        # Calculate risk per share
         risk_per_share = abs(entry_price - stop_loss)
         if risk_per_share == 0:
             return 0
             
         shares_from_risk = risk_amount / risk_per_share
         
-        # 3. Cap at Max Position Size
+        # Cap at Max Position Size
         max_position_val = self._current_equity * self.config.MAX_POSITION_PCT
         shares_from_cap = max_position_val / entry_price
         
@@ -161,6 +188,8 @@ class RiskManager:
              shares = 1
              
         return shares
+
+
 
     def check_trade_frequency_limit(self) -> bool:
         """Check if daily trade limit has been reached."""

@@ -14,6 +14,7 @@ from alpaca.data.requests import (
     StockTradesRequest,
 )
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from alpaca.data.enums import Adjustment
 from alpaca.data.live import StockDataStream
 
 from config.settings import settings
@@ -47,7 +48,7 @@ class MarketDataClient:
         timeframe: TimeFrame = TimeFrame.Minute,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
-        limit: int = 1000,
+        limit: int = 50000,
     ) -> Dict[str, pd.DataFrame]:
         """
         Fetch historical bar data for symbols.
@@ -70,23 +71,50 @@ class MarketDataClient:
         if end is None:
             end = datetime.now()
         
-        request = StockBarsRequest(
-            symbol_or_symbols=symbols,
-            timeframe=timeframe,
-            start=start,
-            end=end,
-            limit=limit,
-        )
+        # Batch symbols into groups of 10 to avoid long URLs or request timeouts
+        batch_size = 10
+        all_bars_data = {}
         
-        bars = self._historical_client.get_stock_bars(request)
+        all_bars_data = {}
+        
+        for symbol in symbols:
+            symbol_data = []
+            next_page_token = None
+            
+            while True:
+                request = StockBarsRequest(
+                    symbol_or_symbols=symbol,
+                    timeframe=timeframe,
+                    start=start,
+                    end=end,
+                    limit=10000, # Use 10k as a safe common limit
+                    page_token=next_page_token,
+                    extended_hours=True,
+                    adjustment=Adjustment.ALL,
+                )
+                batch_bars = self._historical_client.get_stock_bars(request)
+                
+                if symbol in batch_bars.data:
+                    symbol_data.extend(batch_bars.data[symbol])
+                
+                # Check for pagination token in the BarSet or elsewhere?
+                # Actually, alpaca-py BarSet has a next_page_token attribute 
+                # but only if using some specific versions or if it's there.
+                # Let's use the hasattr check just in case.
+                next_page_token = getattr(batch_bars, 'next_page_token', None)
+                if not next_page_token:
+                    break
+            
+            all_bars_data[symbol] = symbol_data
         
         # Convert to DataFrames
         result = {}
-        for symbol in symbols:
-            if symbol in bars.data:
-                symbol_bars = bars.data[symbol]
-                if symbol_bars:
-                    df = pd.DataFrame([{
+        for symbol, bars_list_objs in all_bars_data.items():
+            if bars_list_objs:
+                # Efficiently create DataFrame from bar objects
+                bars_list = []
+                for bar in bars_list_objs:
+                    bars_list.append({
                         "timestamp": bar.timestamp,
                         "open": float(bar.open),
                         "high": float(bar.high),
@@ -94,9 +122,12 @@ class MarketDataClient:
                         "close": float(bar.close),
                         "volume": int(bar.volume),
                         "vwap": float(bar.vwap) if bar.vwap else None,
-                    } for bar in symbol_bars])
-                    df.set_index("timestamp", inplace=True)
-                    result[symbol] = df
+                    })
+                df = pd.DataFrame(bars_list)
+                df.set_index("timestamp", inplace=True)
+                # Filter duplicates (sometimes Alpaca overlaps pages)
+                df = df[~df.index.duplicated(keep='first')]
+                result[symbol] = df
         
         return result
     
@@ -106,7 +137,7 @@ class MarketDataClient:
         timeframe: TimeFrame = TimeFrame.Minute,
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
-        limit: int = 1000,
+        limit: int = 50000,
     ) -> pd.DataFrame:
         """
         Fetch historical bar data for a single symbol as DataFrame.

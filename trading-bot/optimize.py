@@ -49,16 +49,18 @@ def init_pool(data):
 # --- Parameter Grids ---
 
 TIER_1_GRID = {
-    "MIN_SIGNALS_REQUIRED": [2],
-    "MIN_CONFIDENCE_SCORE": [1.5, 2.0],
-    "ATR_SL_MULTIPLIER": [1.5, 2.0, 2.5],
-    "ATR_TP_MULTIPLIER": [3.0, 4.0, 5.0],    # Better Risk/Reward (2:1 or higher)
-    "TRAILING_STOP_ACTIVATION": [0.015, 0.02],
-    "TRAILING_STOP_PCT": [0.0075, 0.01],
-    "MIN_HOLD_MINUTES": [15, 30],
+    "MIN_SIGNALS_REQUIRED": [2, 3, 4],        # Allow higher conviction
+    "MIN_CONFIDENCE_SCORE": [1.5, 2.5, 3.5],  # Broaden threshold range
+    "ATR_SL_MULTIPLIER": [1.5, 2.0, 3.0],    # Loosen stops for swing volatility
+    "ATR_TP_MULTIPLIER": [3.0, 4.0, 6.0],    # Target higher R:R
+    "TRAILING_STOP_ACTIVATION": [0.015, 0.03], # Higher activation to allow trend breath
+    "TRAILING_STOP_PCT": [0.01, 0.02],         # Move away from hyper-tight 0.75% stops
+    "MIN_HOLD_MINUTES": [15, 60],
 }
 
 TIER_2_GRID = {
+    "USE_ATR_STOPS": [True, False],
+    "ATR_SL_FLOOR_PCT": [0.002, 0.005, 0.01],
     "RSI_PERIOD": [10, 14],
     "RSI_OVERSOLD": [25, 30, 35],
     "MIN_VOLUME_RATIO": [1.2, 1.5, 2.0],
@@ -91,39 +93,41 @@ def calculate_score(result: Dict) -> float:
     win_rate = result["win_rate"] / 100
     trades = result["total_trades"]
     
-    # Calculate simple Profit Factor proxy
-    # (Avg Win * Win Rate) / (Avg Loss * (1-Win Rate))
-    # We'll use a simplified version: P&L per trade weight
+    # 1. Profit Factor proxy (Expected Value)
     avg_pnl = result.get("avg_trade", 0)
     
-    # Penalize large drawdowns heavily
+    # 2. Drawdown Penalty (Exponentially worse as it grows)
     dd_penalty = 0
     if result["max_drawdown"] > 0 and result["starting_capital"] > 0:
         dd_pct = (result["max_drawdown"] / result["starting_capital"]) * 100
-        dd_penalty = dd_pct * 1.5  # Increased penalty
+        dd_penalty = (dd_pct ** 1.5) * 2  # Higher penalty for deep drawdowns
     
-    # Reward Expectancy: Average P&L per trade is key for robustness
-    expectancy_bonus = avg_pnl * 0.5
+    # 3. Robustness Factor: Trades per month proxy
+    # We want consistently active but selective strategies
+    trade_weight = min(trades / 30, 1.2)
     
-    # Penalize low trade count (statistically insignificant)
-    trade_weight = min(trades / 50, 1.0)
+    # 4. Win Rate Thresholding (Penalize < 50% heavily)
+    wr_bonus = (win_rate - 0.5) * 50 # Positive if WR > 50%, negative if < 50%
     
-    score = (pnl_pct * trade_weight) + (win_rate * 10) + expectancy_bonus - dd_penalty
+    # 5. Combined Score
+    # We prioritize (P&L * Consistency) + Win Rate robustness - Risk
+    score = (pnl_pct * trade_weight) + wr_bonus - dd_penalty
+    
     return round(score, 2)
 
 
 def run_simulation_wrapper(args):
     """
     Worker function for multiprocessing.
-    args: (params, start_date, end_date, symbols, capital)
+    args: (params, start_date, end_date, symbols, capital, data_cache)
     """
-    params, start_date, end_date, symbols, capital = args
+    params, start_date, end_date, symbols, capital, data_cache = args
     
     # Apply settings in this process
     apply_params(params)
     
     try:
-        # Pass global shared data to the simulation
+        # Pass data cache to the simulation
         result = simulate_period(
             start_date=start_date,
             end_date=end_date,
@@ -131,7 +135,7 @@ def run_simulation_wrapper(args):
             capital=capital,
             verbose=False,
             quiet=True,
-            data_cache=_shared_data
+            data_cache=data_cache
         )
         return params, result
     except Exception as e:
@@ -182,12 +186,6 @@ def optimize(
     print(f"  Processes:    {processes}")
     print(f"  {'-'*60}\n")
     
-    # Prepare arguments for workers
-    worker_args = []
-    for combo in combos:
-        params = dict(zip(keys, combo))
-        worker_args.append((params, start_date, end_date, symbols, capital))
-    
     results = []
     start_time = time.time()
     
@@ -197,25 +195,49 @@ def optimize(
     
     # We need data from start_date - 10 days to end_date + 1 day for indicators Warmup
     fetch_start = start_date - timedelta(days=10)
-    fetch_end = end_date + timedelta(days=1)
+    # Cap fetch_end to yesterday to avoid SIP data restriction on free accounts
+    yesterday_cap = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    fetch_end = min(end_date + timedelta(days=1), yesterday_cap)
     
     # Include SPY and VIXY for context
     fetch_symbols = list(set(symbols + ["SPY", "VIXY"]))
     
     try:
+        target_tf = settings.DEFAULT_TIMEFRAME
+        if target_tf == "1Hour":
+            alpaca_tf = TimeFrame.Hour
+        elif target_tf == "5Min":
+            alpaca_tf = TimeFrame(5, TimeFrameUnit.Minute)
+        else:
+            alpaca_tf = TimeFrame.Minute
+            
         all_data = data_client.get_bars(
             symbols=fetch_symbols,
             start=fetch_start,
-            end=fetch_end,
-            timeframe=TimeFrame.Minute
+            end=end_date + timedelta(days=1),
+            timeframe=alpaca_tf
         )
+        
+        # Pre-calculate ALL indicators in the main process once
+        from data.indicators import calculate_all_indicators
+        print(f"  [PRE] Calculating indicators for all symbols...")
+        for sym in all_data:
+            all_data[sym] = calculate_all_indicators(all_data[sym])
+            
+        print(f"  [OK] Data loaded and indicators initialized.")
         print(f"  [OK] Data loaded: {sum(len(df) for df in all_data.values()):,} total bars")
+        
+        # Prepare arguments for workers (now that we have data)
+        worker_args = []
+        for combo in combos:
+            params = dict(zip(keys, combo))
+            worker_args.append((params, start_date, end_date, symbols, capital, all_data))
     except Exception as e:
         print(f"  [ERROR] Failed to pre-fetch data: {e}")
         return None
 
     # Run multiprocessing pool
-    with multiprocessing.Pool(processes=processes, initializer=init_pool, initargs=(all_data,)) as pool:
+    with multiprocessing.Pool(processes=processes) as pool:
         # returns list of (params, result) tuples
         print(f"  [RUN] Starting {len(combos)} simulations...")
         
@@ -311,9 +333,10 @@ def main():
     
     parser = argparse.ArgumentParser(description="Strategy parameter optimizer")
     parser.add_argument("--tier", type=int, choices=[1, 2, 3], default=1, help="Optimization tier (1=Core, 2=Refine, 3=Risk)")
-    parser.add_argument("--months", type=float, help="Months of history", default=1)
+    parser.add_argument("--months", type=float, help="Months of history", default=3)
     parser.add_argument("--capital", type=float, default=settings.INITIAL_CAPITAL)
     parser.add_argument("--processes", type=int, default=os.cpu_count() or 4, help="Number of parallel processes")
+    parser.add_argument("--symbols", type=str, help="Comma-separated symbols to optimize")
     parser.add_argument("--apply", action="store_true", help="Auto-apply best params to .env")
     
     args = parser.parse_args()
@@ -329,11 +352,14 @@ def main():
             print(f"  This may take a long time. Consider reducing grid or months.")
             # We proceeded anyway, but maybe user wants to know.
 
+    symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else None
+
     results = optimize(
         tier=args.tier,
         months=args.months,
         capital=args.capital,
         processes=args.processes,
+        symbols=symbols,
     )
     
     if results and args.apply:

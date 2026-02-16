@@ -13,12 +13,22 @@ load_dotenv(env_path)
 class SymbolManager:
     """Manages trading symbol watchlists and filtering."""
     
-    # Static watchlist from environment (comma-separated) or defaults
+    # Static watchlist: 30 stocks across 6+ sectors for Swing Trading
     STATIC_WATCHLIST: List[str] = [
-        s.strip() for s in os.getenv(
-            "STATIC_WATCHLIST", 
-            "AAPL,MSFT,NVDA,TSLA,AMD,META,GOOGL,AMZN,SPY,QQQ"
-        ).split(",") if s.strip()
+        # Large-cap tech (high ATR, liquid)
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "AVGO", "TSLA",
+        # Industrials / diversification
+        "CAT", "GE", "HON", "UNP",
+        # Healthcare
+        "LLY", "UNH", "JNJ", "ABBV",
+        # Financials
+        "JPM", "V", "MA", "GS",
+        # Consumer
+        "COST", "HD", "NKE", "SBUX",
+        # Energy
+        "XOM", "CVX",
+        # Semiconductors
+        "AMD", "QCOM", "LRCX", "KLAC",
     ]
     
     # Symbols to always exclude (OTC, specific ETFs, etc.)
