@@ -281,7 +281,16 @@ def _check_long(
     # Require 4 of the 6 primary technical confirmations (excluding regime/VWAP)
     confirmations = sum([adx_ok, bias_ok, ema_ok, rsi_ok, vol_ok, ema_spread_ok])
     
-    if confirmations < 4:
+    # Adaptive confirmation threshold by regime (Phase 7)
+    from config.settings import config as _cfg
+    if regime_state == "BULLISH":
+        min_confirms = max(3, _cfg.CONFIRMATIONS_BULLISH + 1)   # +1 since live has 6 checks vs backtest 5
+    elif regime_state == "CAUTIOUS":
+        min_confirms = max(4, _cfg.CONFIRMATIONS_CAUTIOUS + 1)
+    else:
+        min_confirms = max(5, _cfg.CONFIRMATIONS_BEARISH + 1)
+    
+    if confirmations < min_confirms:
         return None
         
     # Final Mandatory Filters (VWAP and Regime)

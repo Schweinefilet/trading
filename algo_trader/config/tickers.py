@@ -1,15 +1,19 @@
-"""
-Ticker universe and tier classifications.
-"""
+import os
 from typing import List, Dict, Set
 from dataclasses import dataclass, field
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env (shared across bot)
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(env_path)
 
 
 @dataclass
 class TickerUniverse:
     """Manages the tradeable ticker universe, tiers, and sector mappings."""
 
-    # Tradeable tickers ONLY
+    # Tradeable tickers (Default list, overridden by .env in __post_init__)
     TRADE_TICKERS: List[str] = field(default_factory=lambda: [
         "NVDA", "TSLA", "AMD", "AVGO", "MU", "LRCX", "KLAC", "SNDK",
         "QCOM", "TXN", "MPWR", "ADBE", "SNPS", "CDNS", "ADSK",
@@ -54,6 +58,15 @@ class TickerUniverse:
     # Special handling tickers
     TIGHT_STOP_TICKERS: List[str] = field(default_factory=lambda: ["SNDK"])
     TIGHT_STOP_ATR_MULTIPLIER: float = 1.5  # Instead of 2.0 for these tickers
+
+    def __post_init__(self):
+        """Override defaults with .env settings if available."""
+        env_watchlist = os.getenv("STATIC_WATCHLIST", "")
+        if env_watchlist:
+            # Clean up whitespace and handle duplicates
+            raw_list = [t.strip().upper() for t in env_watchlist.split(",") if t.strip()]
+            self.TRADE_TICKERS = sorted(list(set(raw_list)))
+            print(f"Loaded {len(self.TRADE_TICKERS)} tickers from .env watchlist.")
 
     def get_tier(self, symbol: str) -> int:
         """Return tier number for a symbol (1=best, 4=worst)."""

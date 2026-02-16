@@ -49,6 +49,14 @@ def main():
     print(f"  Capital: ${args.capital:,.2f}")
     print(f"  Symbols: {len(symbols)} tickers")
     print(f"  Mode: {'Walk-Forward' if args.walk_forward else 'Standard'}")
+    print(f"{'=' * 60}")
+    
+    # Print all parameters (User requirement)
+    print("\n  CONFIGURATION SETTINGS:")
+    # Filter out methods, constants, and built-ins to show only parameters
+    for key, value in config.__dict__.items():
+        if not key.startswith("_") and not callable(value):
+            print(f"    {key:<30}: {value}")
     print(f"{'=' * 60}\n")
 
     # Fetch historical data

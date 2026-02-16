@@ -39,9 +39,16 @@ def compute_indicators(df: pd.DataFrame, cfg: Optional[object] = None) -> pd.Dat
     if rsi is not None:
         df["rsi"] = rsi
         df["rsi_prev"] = df["rsi"].shift(1)
+        # RSI Rate of Change (acceleration) — Phase 7 momentum quality
+        df["rsi_roc"] = df["rsi"].diff(3)
     else:
         df["rsi"] = np.nan
         df["rsi_prev"] = np.nan
+        df["rsi_roc"] = np.nan
+
+    # RSI(2) for Mean Reversion (Phase 2)
+    rsi2 = ta.rsi(df["close"], length=2)
+    df["rsi_2"] = rsi2 if rsi2 is not None else np.nan
 
     # --- ADX ---
     adx_result = ta.adx(df["high"], df["low"], df["close"], length=cfg.ADX_PERIOD)
@@ -50,6 +57,7 @@ def compute_indicators(df: pd.DataFrame, cfg: Optional[object] = None) -> pd.Dat
         dmp_col = f"DMP_{cfg.ADX_PERIOD}"
         dmn_col = f"DMN_{cfg.ADX_PERIOD}"
         df["adx"] = adx_result[adx_col] if adx_col in adx_result.columns else np.nan
+        df["adx_prev"] = df["adx"].shift(1)
         df["dmp"] = adx_result[dmp_col] if dmp_col in adx_result.columns else np.nan
         df["dmn"] = adx_result[dmn_col] if dmn_col in adx_result.columns else np.nan
     else:
@@ -66,9 +74,23 @@ def compute_indicators(df: pd.DataFrame, cfg: Optional[object] = None) -> pd.Dat
     df["ema_slow"] = ema_slow if ema_slow is not None else np.nan
     df["ema_bias"] = ema_bias if ema_bias is not None else np.nan
 
+    # SMA(5) for Mean Reversion exits (Phase 2)
+    sma5 = ta.sma(df["close"], length=5)
+    df["sma_5"] = sma5 if sma5 is not None else np.nan
+
+    # Bollinger Bands for Mean Reversion (Phase 2)
+    bbands = ta.bbands(df["close"], length=20, std=2.0)
+    if bbands is not None:
+        df["bb_lower"] = bbands["BBL_20_2.0"]
+        df["bb_upper"] = bbands["BBU_20_2.0"]
+    else:
+        df["bb_lower"] = np.nan
+        df["bb_upper"] = np.nan
+
     # --- ATR ---
     atr = ta.atr(df["high"], df["low"], df["close"], length=cfg.ATR_PERIOD)
     df["atr"] = atr if atr is not None else np.nan
+    df["atr_prev"] = df["atr"].shift(1)  # Phase 3 volatility expansion check
 
     # --- VWAP ---
     if cfg.USE_VWAP:
@@ -84,6 +106,14 @@ def compute_indicators(df: pd.DataFrame, cfg: Optional[object] = None) -> pd.Dat
     # --- Volume SMA ---
     vol_sma = ta.sma(df["volume"], length=20)
     df["volume_sma_20"] = vol_sma if vol_sma is not None else np.nan
+
+    # --- Momentum (ROC) for Relative Strength ---
+    roc = ta.roc(df["close"], length=20)
+    df["roc_20"] = roc if roc is not None else np.nan
+    
+    # RS Ranking (Phase 103) - 125-day ROC (~6 months)
+    roc125 = ta.roc(df["close"], length=125)
+    df["roc_125"] = roc125 if roc125 is not None else np.nan
 
     return df
 
@@ -104,6 +134,10 @@ def compute_regime_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["sma_50"] = sma_50 if sma_50 is not None else np.nan
     df["sma_200"] = sma_200 if sma_200 is not None else np.nan
+
+    # Momentum (ROC) for Relative Strength baseline
+    roc = ta.roc(df["close"], length=20)
+    df["roc_20"] = roc if roc is not None else np.nan
 
     # ATR-based volatility proxy for VIX fallback
     atr = ta.atr(df["high"], df["low"], df["close"], length=14)

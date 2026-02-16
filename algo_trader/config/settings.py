@@ -50,7 +50,9 @@ class TradingConfig:
 
     # ADX (trend strength filter)
     ADX_PERIOD: int = 14
-    ADX_TREND_THRESHOLD: float = 10.0      # Lower threshold to catch more trends
+    ADX_TREND_THRESHOLD: float = 30.0      # Phase 105: Back to 30.0 (Optimal)
+
+
 
     # EMAs (trend direction)
     EMA_FAST: int = 9
@@ -64,9 +66,9 @@ class TradingConfig:
     VOLUME_MULTIPLIER: float = 1.2         # Signal requires volume >= 1.2x 20-bar average
 
     # === EXIT RULES ===
-    MIN_REWARD_RISK_RATIO: float = 1.5     # Lowered to accommodate wider stops
-    ATR_STOP_MULTIPLIER: float = 3.5       # Stop loss = entry ± (ATR × 3.5)
-    ATR_TARGET_MULTIPLIER: float = 6.0     # Take profit = entry ± (ATR × 6.0)
+    MIN_REWARD_RISK_RATIO: float = 2.0     
+    ATR_STOP_MULTIPLIER: float = 3.0       # Phase 102: Tightened to 3.0 to maximize size
+    ATR_TARGET_MULTIPLIER: float = 25.0    # Phase 102: Tier 1 moonshot 25.0x target
     
     # Trailing Stop Rules
     TRAILING_STOP_ACTIVATE_ATR: float = 2.0
@@ -74,7 +76,7 @@ class TradingConfig:
     
     # Break-Even Guardrail (Phase 6A)
     BREAK_EVEN_ACTIVATE_ATR: float = 1.2    # Move SL to break-even after +1.2x ATR profit
-    BREAK_EVEN_OFFSET_ATR: float = 0.2      # Offset: entry + 0.2x ATR (breathing room)
+    BREAK_EVEN_OFFSET_ATR: float = 0.2      # Reverted to 0.2 ATR (provide breathing room)
     BREAK_EVEN_MIN_HOLD_MINS: int = 30      # Only after 30 min hold time
     
     # QQQ Directional Risk (Phase 6A)
@@ -83,17 +85,51 @@ class TradingConfig:
     QQQ_EMA_SLOW: int = 21                  # QQQ slow EMA for trend detection
     
     TIME_STOP_MINUTES_BEFORE_CLOSE: int = 15
+    
+    # === PARTIAL EXITS (Phase 105) ===
+    USE_PARTIAL_EXITS: bool = True
+    PARTIAL_EXIT_PCT_BULLISH: float = 0.10  
+    PARTIAL_EXIT_PCT_DEFAULT: float = 0.20  
+    PARTIAL_EXIT_ATR_TRIGGER: float = 3.5   # Phase 105: 3.5x ATR trigger
 
+
+
+
+    
+    # Adaptive Confirmations (Phase 7: 3/3/3 out of 5 - Core Only)
+    CONFIRMATIONS_BULLISH: int = 3
+    CONFIRMATIONS_CAUTIOUS: int = 3
+    CONFIRMATIONS_BEARISH: int = 3
+
+
+    
+    # === ENTRY TIME FILTERING === # Entry filtering
+    ENTRY_BLACKOUT_OPEN_MINS: int = 5
+    ENTRY_BLACKOUT_CLOSE_MINS: int = 5
+    ENTRY_SKIPPED_DAYS: List[int] = field(default_factory=lambda: [1])  # Skip Tuesdays (Phase 2 analysis)
+
+    # Phase 3 Sharpening
+    MAX_HOLD_HOURS: int = 48            # Phase 7: Tighter time-stop for efficiency
+    MAX_SECTOR_POSITIONS: int = 2       # Max correlated trades per sector
+    
     # === RISK MANAGEMENT ===
-    RISK_PER_TRADE_PCT: float = 0.01       # 1% of equity risked per trade
-    MAX_POSITION_PCT: float = 0.25         # Max 25% of equity in single position
-    MAX_PORTFOLIO_HEAT_PCT: float = 0.06   # Max 6% total portfolio risk
-    MAX_POSITIONS: int = 4
+    RISK_PER_TRADE_BULLISH: float = 0.067  # Phase 105: 6.7% Risk (The Breakthrough)
+    RISK_PER_TRADE_CAUTIOUS: float = 0.052 # 5.2% Risk
+    RISK_PER_TRADE_BEARISH: float = 0.025  
+    
+    RISK_PER_TRADE_PCT: float = 0.067      # Fallback
+    MAX_POSITION_PCT: float = 0.60         
+    MAX_PORTFOLIO_HEAT_PCT: float = 0.90   
+    MAX_POSITIONS: int = 15                
+    
+    USE_COMPLEX_RISK_MULTIPLIERS: bool = False 
+
+
     MAX_SAME_SECTOR: int = 2
     MAX_CAPITAL_DEPLOYED_PCT: float = 0.70 # Keep 30% cash buffer
     
     # Position Sizing Toggle (Phase 6B)
-    USE_RISK_BASED_SIZING: bool = False     # If False, use FIXED_POSITION_DOLLAR
+    USE_RISK_BASED_SIZING: bool = True      # Enabled for compounding growth (essential for >300% return)
     FIXED_POSITION_DOLLAR: float = 3000.0  # Normalized dollar amount per trade
 
     # === DRAWDOWN / CIRCUIT BREAKERS ===

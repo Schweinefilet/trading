@@ -51,6 +51,8 @@ class BacktestEngine:
         self.cfg = cfg or config
         self.trades: List[BacktestTrade] = []
         self.equity_curve: List[float] = []
+        self.leaderboard_cache: Dict = {} # date -> {symbol: rank_percentile}
+
 
     def run(
         self,
@@ -76,6 +78,8 @@ class BacktestEngine:
             Dict with trades, metrics, equity_curve
         """
         capital = capital or self.cfg.STARTING_CAPITAL
+        self.spy_daily = spy_daily
+        self.bar_data = bar_data # Store for internal method access (Phase 103)
         self.cash = capital  # Track available cash
         self.verbose = verbose
         equity = capital
@@ -134,6 +138,10 @@ class BacktestEngine:
         et = pytz.timezone("US/Eastern")
 
         for i, ts in enumerate(sorted_timestamps):
+            # Phase 103: Dynamic Leaderboard Cache Reset (daily)
+            # (Handled inside _generate_signal now, but initialized here for safety)
+            ts_date = ts.date() if hasattr(ts, 'date') else None
+
             # Convert to Eastern for time checks
             if hasattr(ts, 'tz') and ts.tz is not None:
                 ts_et = ts.astimezone(et)
@@ -222,6 +230,19 @@ class BacktestEngine:
                 bar = bar_data[sym].loc[ts]
                 pos = positions[sym]
 
+                # Partial exit check (Phase 7)
+                partial_pnl = self._check_partial_exit(pos, bar, ts, equity, day_trades_in_window)
+                if partial_pnl is not None:
+                    daily_pnl += partial_pnl
+                    weekly_pnl += partial_pnl
+                    monthly_pnl += partial_pnl
+                    equity += partial_pnl
+                    if partial_pnl > 0:
+                        consecutive_losses = 0
+                    # If position was fully closed during partial (shouldn't happen), clean up
+                    if sym not in positions:
+                        continue
+
                 hit, exit_price, reason = self._check_stops(pos, bar, current_ts=ts)
                 if hit:
                     pnl = self._close_position(
@@ -244,6 +265,15 @@ class BacktestEngine:
 
             # Skip signal generation if at max positions
             if len(positions) >= self.cfg.MAX_POSITIONS:
+                self.equity_curve.append(equity)
+                continue
+
+            # Entry time sub-filter (Phase 7) — only generate signals in tighter windows
+            # Check time window & day filter
+            if not self._in_entry_window(ts_et):
+                # Temporary: disabling Tuesday skip to test if it's the bottleneck
+                # if ts_et.weekday() in self.cfg.ENTRY_SKIPPED_DAYS:
+                #     continue 
                 self.equity_curve.append(equity)
                 continue
 
@@ -286,6 +316,12 @@ class BacktestEngine:
                 if not is_day_trade and not self.cfg.ALLOW_SWING_OVERFLOW:
                     continue
 
+                # Correlation Guard (Phase 3)
+                sector = tickers.get_sector(sig["symbol"])
+                sector_count = sum(1 for s, p in positions.items() if tickers.get_sector(s) == sector)
+                if sector_count >= self.cfg.MAX_SECTOR_POSITIONS:
+                    continue
+
                 # Position sizing
                 sym = sig["symbol"]
                 entry_price = sig["entry_price"]
@@ -319,7 +355,21 @@ class BacktestEngine:
                     if ts in qqq_trend_bullish and not qqq_trend_bullish[ts]:
                         qqq_mult = self.cfg.QQQ_RISK_REDUCTION_BEARISH
 
-                    risk_amount = equity * self.cfg.RISK_PER_TRADE_PCT * dd_mult * regime_mult * qqq_mult
+                    # Regime-based risk scaling (Phase 100)
+                    risk_pct = self.cfg.RISK_PER_TRADE_PCT
+                    if regime == "BULLISH":
+                        risk_pct = self.cfg.RISK_PER_TRADE_BULLISH
+                    elif regime == "CAUTIOUS":
+                        risk_pct = self.cfg.RISK_PER_TRADE_CAUTIOUS
+                    elif regime == "BEARISH":
+                        risk_pct = self.cfg.RISK_PER_TRADE_BEARISH
+
+                    # Complex risk multipliers (Phase 6 toggle)
+                    if getattr(self.cfg, "USE_COMPLEX_RISK_MULTIPLIERS", True):
+                        risk_amount = equity * risk_pct * dd_mult * regime_mult * qqq_mult
+                    else:
+                        risk_amount = equity * risk_pct
+
                     shares = max(1, math.floor(risk_amount / stop_distance))
                 else:
                     # Fixed-dollar sizing
@@ -374,6 +424,7 @@ class BacktestEngine:
                     "is_day_trade": is_day_trade,
                     "highest_price": actual_entry,
                     "lowest_price": actual_entry,
+                    "strategy": sig.get("strategy", "trend_following"), # Track strategy for special exit logic
                 }
 
                 if is_day_trade:
@@ -438,6 +489,11 @@ class BacktestEngine:
 
         from strategy.regime import regime_allows_trade
         
+        # RSI acceleration (Phase 7)
+        rsi_roc = curr.get("rsi_roc", 0)
+        if pd.isna(rsi_roc):
+            rsi_roc = 0
+        
         # 1. ADX trend strength
         adx_ok = adx >= self.cfg.ADX_TREND_THRESHOLD
         
@@ -455,37 +511,145 @@ class BacktestEngine:
         # 5. Volume Surge
         vol_ok = volume >= self.cfg.VOLUME_MULTIPLIER * volume_sma
         
-        # Require 3 of the 5 primary technical confirmations
+        # 6. RSI Acceleration (Phase 3 - Moved from Score to Confirmation)
+        rsi_accel_ok = rsi_roc > 0
+        
+        # 7. ATR Expansion (Phase 3 - Volatility confirmation)
+        atr_prev = curr.get("atr_prev", np.nan)
+        atr_expanding = (not pd.isna(atr_prev) and atr > atr_prev) or pd.isna(atr_prev)
+        
+        # Adaptive confirmation threshold (Phase 3: BULLISH 4, CAUTIOUS 5, BEARISH 6)
+        if regime == "BULLISH":
+            min_confirms = self.cfg.CONFIRMATIONS_BULLISH
+        elif regime == "CAUTIOUS":
+            min_confirms = self.cfg.CONFIRMATIONS_CAUTIOUS
+        else:
+            min_confirms = self.cfg.CONFIRMATIONS_BEARISH
+        
+        # Phase 7: Revert to Core 5 Confirmations (RSI Accel/ATR Exp moved to Score)
         confirmations = sum([adx_ok, bias_ok, ema_ok, rsi_ok, vol_ok])
         
+        # Relative Strength (Stock ROC vs SPY ROC)
+        spy_roc = 0
+        stock_roc = curr.get("roc_20", 0)
+        
+        # Look up SPY ROC for the current date
+        spy_ts = pd.Timestamp(ts.date())
+        if self.spy_daily is not None and not self.spy_daily.empty and spy_ts in self.spy_daily.index:
+            spy_roc = self.spy_daily.loc[spy_ts].get("roc_20", 0)
+            
+        rel_strength = stock_roc - spy_roc
+        
         # LONG check
-        if (confirmations >= 3 and regime_allows_trade(regime, "LONG")):
+        if (confirmations >= min_confirms and regime_allows_trade(regime, "LONG")):
             if not self.cfg.USE_VWAP or pd.isna(vwap) or close > vwap:
-                return {
-                    "symbol": symbol,
-                    "direction": "LONG",
-                    "entry_price": close,
-                    "stop_price": close - atr * stop_mult,
-                    "take_profit": close + atr * self.cfg.ATR_TARGET_MULTIPLIER,
-                    "atr": atr,
-                    "strength": self._score(adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol),
-                }
+                # ADX Rising check (Phase 100)
+                adx_prev = curr.get("adx_prev", np.nan)
+                adx_rising = (not pd.isna(adx_prev) and adx > adx_prev) or pd.isna(adx_prev)
+                
+                if adx_rising:
+                    # Dynamic Take-Profit Ranking (Phase 103)
+                    target_mult = 10.0 # Default
+                    
+                    # Get current date's rankings
+                    ts_date = ts.date()
+                    if ts_date not in self.leaderboard_cache:
+                        self._update_leaderboard(ts_date, self.bar_data)
+                    
+                    rank = self.leaderboard_cache[ts_date].get(symbol, 0.5) # Default to 50th percentile
+                    
+                    if rank <= 0.25: # Top 25% (Leaders)
+                        target_mult = 25.0
+                    elif rank <= 0.50: # Top 25-50%
+                        target_mult = 15.0
+                    else: # Bottom 50%
+                        target_mult = 10.0
 
-        # SHORT check (remain strict for now)
-        if self.cfg.ALLOW_SHORTS and regime_allows_trade(regime, "SHORT"):
-            # Add basic short logic if needed
-            pass
+                    return {
+                        "symbol": symbol,
+                        "direction": "LONG",
+                        "entry_price": close,
+                        "stop_price": close - atr * stop_mult,
+                        "take_profit": close + atr * target_mult,
+                        "atr": atr,
+                        "strength": self._score(adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol, rsi_roc, rel_strength, atr_expanding, ts),
+                        "strategy": "trend_following",
+                        "regime_at_entry": regime # Track for partial exit scaling
+                    }
 
+        # 2. Mean Reversion Logic (Phase 2)
+        if regime in ["CAUTIOUS", "BEARISH"]:
+            rsi2 = curr.get("rsi_2", np.nan)
+            bb_lower = curr.get("bb_lower", np.nan)
+            if not pd.isna(rsi2) and not pd.isna(bb_lower):
+                # Trigger: RSI(2) < 10 (tighter) AND Price < Lower BB
+                if rsi2 < 10 and close < bb_lower:
+                    return {
+                        "symbol": symbol,
+                        "direction": "LONG",
+                        "entry_price": close,
+                        "stop_price": close - atr * 1.0,
+                        "take_profit": close + (atr * 4.0), # Phase 4: Higher target for MR
+                        "atr": atr,
+                        "strength": 0.85,
+                        "strategy": "mean_reversion"
+                    }
+        
         return None
 
-    def _score(self, adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol):
-        """Signal strength score."""
+    def _update_leaderboard(self, date, bar_data_in: Dict[str, pd.DataFrame]):
+        """Calculate Relative Strength rankings for all symbols on a specific date."""
+        scores = {}
+        for sym, df in bar_data_in.items():
+            if sym in ["SPY", "QQQ"]: continue
+            
+            # Find the most recent bar on or before this date
+            day_data = df[df.index.date <= date]
+            if not day_data.empty:
+                val = day_data.iloc[-1].get("roc_125", np.nan)
+                if not pd.isna(val):
+                    scores[sym] = val
+        
+        if not scores:
+            self.leaderboard_cache[date] = {}
+            return
+            
+        # Rank symbols (higher ROC = better rank 1)
+        sorted_syms = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        num_syms = len(sorted_syms)
+        
+        self.leaderboard_cache[date] = {
+            sym: (i + 1) / num_syms for i, sym in enumerate(sorted_syms)
+        }
+
+
+    def _score(self, adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol, rsi_roc=0, rel_strength=0.0, atr_expanding=False, ts=None):
+        """Signal strength score with Phase 103 Dynamic RS bonuses."""
         adx_s = min(max((adx - 20) / 40, 0), 1.0)
         rsi_s = min(abs(rsi - 50) / 30, 1.0)
         vol_s = min(max((volume / volume_sma - 1) / 2, 0), 1.0) if volume_sma > 0 else 0
         ema_s = min(abs(ema_fast - ema_slow) / atr, 1.0) if atr > 0 else 0
-        tier_bonus = tickers.get_tier_bonus(symbol)
-        return adx_s * 0.25 + rsi_s * 0.25 + vol_s * 0.20 + ema_s * 0.15 + tier_bonus
+        
+        # Phase 103: Dynamic RS Bonus (Hindsight-Free)
+        rs_score_bonus = 0.0
+        if ts is not None:
+            ts_date = ts.date()
+            if ts_date in self.leaderboard_cache:
+                rank = self.leaderboard_cache[ts_date].get(symbol, 0.5)
+                if rank <= 0.25: # Dynamic Tier 1
+                    rs_score_bonus = 0.15
+                elif rank <= 0.50: # Dynamic Tier 2
+                    rs_score_bonus = 0.10
+        
+        # RSI acceleration bonus
+        rsi_accel_bonus = 0.05 if (rsi_roc and rsi_roc > 0) else 0
+        # ATR expansion bonus (Phase 7)
+        atr_bonus = 0.05 if atr_expanding else 0
+        # Relative Strength (Intraday) bonus
+        rs_intraday_bonus = 0.05 if rel_strength > 0 else 0
+        
+        return adx_s * 0.25 + rsi_s * 0.25 + vol_s * 0.20 + ema_s * 0.10 + rs_score_bonus + rsi_accel_bonus + rs_intraday_bonus + atr_bonus
+
 
     def _check_stops(self, pos: dict, bar, current_ts=None) -> Tuple[bool, float, str]:
         """Check if stop-loss or take-profit was hit during this bar."""
@@ -513,19 +677,35 @@ class BacktestEngine:
             if current_ts is not None and not pos.get("break_even_set", False):
                 hold_delta = current_ts - pos["entry_time"]
                 hold_mins = hold_delta.total_seconds() / 60
-                if hold_mins >= self.cfg.BREAK_EVEN_MIN_HOLD_MINS:
-                    profit_atr = (highest - pos["entry_price"]) / pos["atr"] if pos["atr"] > 0 else 0
-                    if profit_atr >= self.cfg.BREAK_EVEN_ACTIVATE_ATR:
-                        be_stop = pos["entry_price"] + (pos["atr"] * self.cfg.BREAK_EVEN_OFFSET_ATR)
-                        if be_stop > pos["stop_price"]:
-                            pos["stop_price"] = be_stop
-                            pos["break_even_set"] = True
-                            # Re-check if current bar triggers the new BE stop
-                            if low <= be_stop:
-                                return True, be_stop, "break_even"
+                profit_atr = (highest - pos["entry_price"]) / pos["atr"] if pos["atr"] > 0 else 0
+                if hold_mins >= self.cfg.BREAK_EVEN_MIN_HOLD_MINS and profit_atr >= self.cfg.BREAK_EVEN_ACTIVATE_ATR:
+                    be_stop = pos["entry_price"] + (pos["atr"] * self.cfg.BREAK_EVEN_OFFSET_ATR)
+                    if be_stop > pos["stop_price"]:
+                        pos["stop_price"] = be_stop
+                        pos["break_even_set"] = True
+                        # Re-check if current bar triggers the new BE stop
+                        if low <= be_stop:
+                            return True, be_stop, "break_even"
+
+            # Stale Trade Temporal Exit (Phase 3)
+            if current_ts is not None:
+                hold_hours = (current_ts - pos["entry_time"]).total_seconds() / 3600
+                max_hold = 48 if pos.get("strategy") == "mean_reversion" else self.cfg.MAX_HOLD_HOURS
+                if hold_hours >= max_hold:
+                    return True, bar.get("close", pos["entry_price"]), "time_stop_stale"
             
             # Update highest for trailing
             pos["highest_price"] = max(highest, high)
+
+            # --- Phase 2: Mean Reversion Special Exits ---
+            if pos.get("strategy") == "mean_reversion":
+                rsi2 = bar.get("rsi_2", np.nan)
+                sma5 = bar.get("sma_5", np.nan)
+                close = bar.get("close", 0)
+                
+                # Exit on RSI(2) overbought or price touching SMA(5)
+                if (not pd.isna(rsi2) and rsi2 > 70) or (not pd.isna(sma5) and close > sma5):
+                    return True, close, "mean_reversion_exit"
 
         else:
             # SHORT logic
@@ -546,15 +726,14 @@ class BacktestEngine:
             if current_ts is not None and not pos.get("break_even_set", False):
                 hold_delta = current_ts - pos["entry_time"]
                 hold_mins = hold_delta.total_seconds() / 60
-                if hold_mins >= self.cfg.BREAK_EVEN_MIN_HOLD_MINS:
-                    profit_atr = (pos["entry_price"] - lowest) / pos["atr"] if pos["atr"] > 0 else 0
-                    if profit_atr >= self.cfg.BREAK_EVEN_ACTIVATE_ATR:
-                        be_stop = pos["entry_price"] - (pos["atr"] * self.cfg.BREAK_EVEN_OFFSET_ATR)
-                        if be_stop < pos["stop_price"]:
-                            pos["stop_price"] = be_stop
-                            pos["break_even_set"] = True
-                            if high >= be_stop:
-                                return True, be_stop, "break_even"
+                profit_atr = (pos["entry_price"] - lowest) / pos["atr"] if pos["atr"] > 0 else 0
+                if hold_mins >= self.cfg.BREAK_EVEN_MIN_HOLD_MINS and profit_atr >= self.cfg.BREAK_EVEN_ACTIVATE_ATR:
+                    be_stop = pos["entry_price"] - (pos["atr"] * self.cfg.BREAK_EVEN_OFFSET_ATR)
+                    if be_stop < pos["stop_price"]:
+                        pos["stop_price"] = be_stop
+                        pos["break_even_set"] = True
+                        if high >= be_stop:
+                            return True, be_stop, "break_even"
             
             pos["lowest_price"] = min(lowest, low)
 
@@ -564,12 +743,12 @@ class BacktestEngine:
         self, positions: dict, symbol: str, exit_price: float,
         exit_time, reason: str, equity: float, day_trade_dates: list
     ) -> Optional[float]:
-        """Close a position and record the trade."""
+        """Close a position and record the trade (includes accumulated partial P&L)."""
         if symbol not in positions:
             return None
 
         pos = positions.pop(symbol)
-        shares = pos["shares"]
+        shares = pos["shares"]  # Remaining shares after any partial exit
         entry_price = pos["entry_price"]
 
         # Apply exit costs
@@ -589,34 +768,46 @@ class BacktestEngine:
         finra_taf = min(math.ceil(shares * self.cfg.FINRA_TAF_RATE * 100) / 100, self.cfg.FINRA_TAF_CAP)
         total_fees = sec_fee + finra_taf
         
-        pnl = gross_pnl - total_fees
+        remaining_pnl = gross_pnl - total_fees
+        
+        # Add accumulated partial P&L (Phase 7)
+        partial_pnl = pos.get("partial_pnl_realized", 0)
+        partial_shares_exited = pos.get("partial_shares_exited", 0)
+        total_pnl = remaining_pnl + partial_pnl
+        
+        # Total shares = remaining + any partial exits already done
+        total_shares = shares + partial_shares_exited
 
-        # Update cash (return cost basis + PnL)
+        # Update cash (return cost basis + PnL for remaining shares)
         cost_basis = entry_price * shares
-        proceeds = cost_basis + pnl
+        proceeds = cost_basis + remaining_pnl
         self.cash += proceeds
 
-        pnl_pct = pnl / (entry_price * shares) * 100 if entry_price > 0 else 0
+        pnl_pct = total_pnl / (entry_price * total_shares) * 100 if entry_price > 0 else 0
+        
+        # Determine exit reason suffix if partial was taken
+        final_reason = f"{reason}+partial" if partial_pnl != 0 else reason
 
-        # Record trade
+        # Record trade with combined P&L
         trade = BacktestTrade(
             symbol=symbol,
             direction=pos["direction"],
             entry_price=entry_price,
             exit_price=actual_exit,
-            shares=shares,
+            shares=total_shares,
             entry_time=pos["entry_time"],
             exit_time=exit_time,
-            pnl=pnl,
+            pnl=total_pnl,
             pnl_pct=pnl_pct,
-            exit_reason=reason,
+            exit_reason=final_reason,
             is_day_trade=pos.get("is_day_trade", True),
             atr_at_entry=pos.get("atr", 0),
         )
         self.trades.append(trade)
 
         if self.verbose:
-             print(f"  {exit_time} | EXIT {pos['direction']} {shares} {symbol} @ ${actual_exit:.2f} | Gross=${gross_pnl:.2f} | Fees=${total_fees:.2f} | Net PnL=${pnl:.2f} ({reason})")
+             print(f"  {exit_time} | EXIT {pos['direction']} {shares} {symbol} @ ${actual_exit:.2f} | "
+                   f"Remaining=${remaining_pnl:.2f} | Partial=${partial_pnl:.2f} | Total PnL=${total_pnl:.2f} ({final_reason})")
 
         # Record day trade for PDT tracking
         if pos.get("is_day_trade", True):
@@ -625,7 +816,7 @@ class BacktestEngine:
                 entry_date = entry_date.date() if hasattr(entry_date, 'date') else entry_date
             day_trade_dates.append(entry_date)
 
-        return pnl
+        return total_pnl
 
     def _count_day_trades(self, day_trade_dates: list, current_date) -> int:
         """Count day trades in the last 5 business days."""
@@ -677,10 +868,130 @@ class BacktestEngine:
         return regime_map
 
     def _in_trading_hours(self, t: dt_time) -> bool:
-        """Check if time is in active trading window."""
+        """Check if time is in active trading window (for stop checks etc.)."""
         morning_start = dt_time(10, 0)
         morning_end = dt_time(11, 30)
         afternoon_start = dt_time(13, 30)
         afternoon_end = dt_time(15, 45)
 
         return (morning_start <= t < morning_end) or (afternoon_start <= t < afternoon_end)
+
+    def _in_entry_window(self, dt: datetime) -> bool:
+        """
+        Check if datetime is within allowable trading window and day.
+        Excludes open/close noise and specific skipped days (e.g. Tuesdays).
+        """
+        # 1. Day Filter (Phase 2)
+        if dt.weekday() in self.cfg.ENTRY_SKIPPED_DAYS:
+            return False
+
+        t = dt.time()
+        bo = self.cfg.ENTRY_BLACKOUT_OPEN_MINS
+        bc = self.cfg.ENTRY_BLACKOUT_CLOSE_MINS
+        
+        # Morning window: 10:00+bo to 11:30-bc
+        m_start = dt_time(10, bo)
+        m_end_h, m_end_m = divmod(11 * 60 + 30 - bc, 60)
+        m_end = dt_time(m_start.hour if m_end_h > 12 else m_end_h, m_end_m)
+        
+        # Afternoon window: 13:30+bo to 15:45-bc
+        a_start_total = 13 * 60 + 30 + bo
+        a_start = dt_time(*divmod(a_start_total, 60))
+        a_end_total = 15 * 60 + 45 - bc
+        a_end = dt_time(*divmod(a_end_total, 60))
+        
+        return (m_start <= t < m_end) or (a_start <= t < a_end)
+
+    def _check_partial_exit(self, pos: dict, bar, current_ts, equity: float, day_trade_dates: list):
+        """Check if partial exit should trigger at configured ATR profit (Phase 7).
+        
+        Instead of recording a separate trade, accumulates P&L within the position.
+        The combined P&L is included when the remaining position finally closes.
+        Returns realized P&L of the partial close, or None if no partial taken.
+        """
+        if not self.cfg.USE_PARTIAL_EXITS:
+            return None
+        if pos.get("partial_taken", False):
+            return None
+        
+        high = bar.get("high", 0)
+        low = bar.get("low", 0)
+        atr = pos.get("atr", 0)
+        if atr <= 0:
+            return None
+        
+        if pos["direction"] == "LONG":
+            profit_atr = (high - pos["entry_price"]) / atr
+        else:
+            profit_atr = (pos["entry_price"] - low) / atr
+        
+        if profit_atr < self.cfg.PARTIAL_EXIT_ATR_TRIGGER:
+            return None
+        
+        # Trigger partial exit
+        # Phase 100: Regime-based partial exit size
+        regime = pos.get("regime_at_entry", "CAUTIOUS")
+        part_pct = self.cfg.PARTIAL_EXIT_PCT_BULLISH if regime == "BULLISH" else self.cfg.PARTIAL_EXIT_PCT_DEFAULT
+        
+        total_shares = pos["shares"]
+        partial_shares = math.floor(total_shares * part_pct)
+        remaining_shares = total_shares - partial_shares
+        
+        if remaining_shares < 1:
+            return None  # Don't partial if it would close the whole position
+        
+        # Partial exit price = entry + trigger ATR
+        if pos["direction"] == "LONG":
+            partial_exit_price = pos["entry_price"] + atr * self.cfg.PARTIAL_EXIT_ATR_TRIGGER
+        else:
+            partial_exit_price = pos["entry_price"] - atr * self.cfg.PARTIAL_EXIT_ATR_TRIGGER
+        
+        # Apply exit costs on partial
+        execution_cost_per_share = partial_exit_price * self.cfg.SLIPPAGE_PCT + self.cfg.SPREAD_COST_PER_SHARE
+        if pos["direction"] == "LONG":
+            actual_partial_exit = partial_exit_price - execution_cost_per_share
+            gross_pnl = (actual_partial_exit - pos["entry_price"]) * partial_shares
+        else:
+            actual_partial_exit = partial_exit_price + execution_cost_per_share
+            gross_pnl = (pos["entry_price"] - actual_partial_exit) * partial_shares
+        
+        # Regulatory fees on partial
+        exit_proceeds = partial_shares * actual_partial_exit
+        sec_fee = math.ceil(exit_proceeds * self.cfg.SEC_FEE_RATE * 100) / 100
+        finra_taf = min(math.ceil(partial_shares * self.cfg.FINRA_TAF_RATE * 100) / 100, self.cfg.FINRA_TAF_CAP)
+        total_fees = sec_fee + finra_taf
+        pnl = gross_pnl - total_fees
+        
+        # Accumulate partial P&L in position (don't create a separate trade)
+        pos["partial_pnl_realized"] = pos.get("partial_pnl_realized", 0) + pnl
+        pos["partial_shares_exited"] = pos.get("partial_shares_exited", 0) + partial_shares
+        # Update shares and proceeds
+        pos["shares"] = remaining_shares
+        # Mark as partial taken
+        pos["partial_exit_taken"] = True
+        
+        # Phase 4: Restore dynamic TP from config for the remainder
+        target_mult = self.cfg.ATR_TARGET_MULTIPLIER
+        pos["take_profit"] = pos["entry_price"] + atr * target_mult if pos["direction"] == "LONG" \
+            else pos["entry_price"] - atr * target_mult
+        
+        # Move stop to break-even + lock profit offset after partial
+        be_stop = pos["entry_price"] + (atr * self.cfg.BREAK_EVEN_OFFSET_ATR) if pos["direction"] == "LONG" \
+            else pos["entry_price"] - (atr * self.cfg.BREAK_EVEN_OFFSET_ATR)
+        if pos["direction"] == "LONG" and be_stop > pos["stop_price"]:
+            pos["stop_price"] = be_stop
+            pos["break_even_set"] = True
+        elif pos["direction"] == "SHORT" and be_stop < pos["stop_price"]:
+            pos["stop_price"] = be_stop
+            pos["break_even_set"] = True
+        
+        # Return cash from partial close
+        partial_cost_basis = pos["entry_price"] * partial_shares
+        self.cash += partial_cost_basis + pnl
+        
+        if self.verbose:
+            print(f"  {current_ts} | PARTIAL EXIT {pos['direction']} {partial_shares}/{total_shares} {pos['symbol']} "
+                  f"@ ${actual_partial_exit:.2f} | PnL=${pnl:.2f} | Remaining={remaining_shares}")
+        
+        return pnl
+
