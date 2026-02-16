@@ -1,0 +1,26 @@
+{
+  "total_return": 74641.95,
+  "total_return_pct": 298.57,
+  "annualized_return_pct": 29.05,
+  "total_trades": 4051,
+  "win_rate": 60.23,
+  "avg_win": 111.06,
+  "avg_loss": -121.87,
+  "profit_factor": 1.38,
+  "expectancy": 18.43,
+  "sharpe_ratio": 1.14,
+  "sortino_ratio": 1.57,
+  "max_drawdown_pct": 6.63,
+  "largest_win": 2298.13,
+  "largest_loss": -967.47,
+  "day_trades": 808,
+  "swing_trades": 3243,
+  "exit_reasons": {
+    "stop_loss": 1937,
+    "EOD_close": 36,
+    "take_profit": 632,
+    "trailing_stop": 1160,
+    "break_even": 283,
+    "backtest_end": 3
+  }
+}
