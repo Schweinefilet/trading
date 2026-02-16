@@ -50,7 +50,7 @@ class TradingConfig:
 
     # ADX (trend strength filter)
     ADX_PERIOD: int = 14
-    ADX_TREND_THRESHOLD: float = 30.0      # Phase 105: Back to 30.0 (Optimal)
+    ADX_TREND_THRESHOLD: float = 30.0      # Phase 108 Optimized
 
 
 
@@ -68,7 +68,7 @@ class TradingConfig:
     # === EXIT RULES ===
     MIN_REWARD_RISK_RATIO: float = 2.0     
     ATR_STOP_MULTIPLIER: float = 3.0       # Phase 102: Tightened to 3.0 to maximize size
-    ATR_TARGET_MULTIPLIER: float = 25.0    # Phase 102: Tier 1 moonshot 25.0x target
+    ATR_TARGET_MULTIPLIER: float = 25.0    # Phase 108 Optimized (Leaders)
     
     # Trailing Stop Rules
     TRAILING_STOP_ACTIVATE_ATR: float = 2.0
@@ -113,8 +113,8 @@ class TradingConfig:
     MAX_SECTOR_POSITIONS: int = 2       # Max correlated trades per sector
     
     # === RISK MANAGEMENT ===
-    RISK_PER_TRADE_BULLISH: float = 0.067  # Phase 105: 6.7% Risk (The Breakthrough)
-    RISK_PER_TRADE_CAUTIOUS: float = 0.052 # 5.2% Risk
+    RISK_PER_TRADE_BULLISH: float = 0.067  # Phase 108 Optimized
+    RISK_PER_TRADE_CAUTIOUS: float = 0.055 # Phase 108 Optimized
     RISK_PER_TRADE_BEARISH: float = 0.025  
     
     RISK_PER_TRADE_PCT: float = 0.067      # Fallback

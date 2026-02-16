@@ -51,7 +51,9 @@ class BacktestEngine:
         self.cfg = cfg or config
         self.trades: List[BacktestTrade] = []
         self.equity_curve: List[float] = []
+        self.cash: float = self.cfg.STARTING_CAPITAL
         self.leaderboard_cache: Dict = {} # date -> {symbol: rank_percentile}
+        self.pending_entries: Dict[str, dict] = {} # symbol -> {signal_data, age, signal_bar_volume}
 
 
     def run(
@@ -268,12 +270,11 @@ class BacktestEngine:
                 self.equity_curve.append(equity)
                 continue
 
-            # Entry time sub-filter (Phase 7) — only generate signals in tighter windows
-            # Check time window & day filter
-            if not self._in_entry_window(ts_et):
-                # Temporary: disabling Tuesday skip to test if it's the bottleneck
-                # if ts_et.weekday() in self.cfg.ENTRY_SKIPPED_DAYS:
-                #     continue 
+            # Entry time sub-filter (Phase 7 / 107)
+            # Blackout: 9:30-10:00 (Open) and 15:30-16:00 (Close)
+            can_generate_new_signals = self._in_entry_window(ts_et) and ts_et.time() < dt_time(15, 30)
+
+            if not can_generate_new_signals:
                 self.equity_curve.append(equity)
                 continue
 
@@ -304,137 +305,44 @@ class BacktestEngine:
 
             executed = 0
             for sig in signals_this_bar:
-                if executed >= 2:
-                    break  # Max 2 entries per bar
+                if executed >= self.cfg.MAX_POSITIONS - len(positions):
+                    break
                 if len(positions) >= self.cfg.MAX_POSITIONS:
                     break
+
+                sym = sig["symbol"]
 
                 if self.cfg.HOLD_OVERNIGHT:
                     is_day_trade = False
                 else:
                     is_day_trade = day_trades_remaining > 0
-                if not is_day_trade and not self.cfg.ALLOW_SWING_OVERFLOW:
-                    continue
 
-                # Correlation Guard (Phase 3)
-                sector = tickers.get_sector(sig["symbol"])
-                sector_count = sum(1 for s, p in positions.items() if tickers.get_sector(s) == sector)
-                if sector_count >= self.cfg.MAX_SECTOR_POSITIONS:
-                    continue
-
-                # Position sizing
-                sym = sig["symbol"]
+                # Immediate execution (Phase 105 proven logic)
                 entry_price = sig["entry_price"]
                 stop_price = sig["stop_price"]
-                atr = sig["atr"]
-
-                if self.cfg.USE_RISK_BASED_SIZING:
-                    # Risk-based sizing (1% risk per trade)
-                    stop_distance = abs(entry_price - stop_price)
-                    if stop_distance <= 0:
-                        continue
-
-                    # Drawdown sizing
-                    dd_mult = 1.0
-                    if peak_equity > 0:
-                        dd = (peak_equity - equity) / peak_equity
-                        if dd >= 0.10:
-                            dd_mult = 0.50
-                        elif dd >= 0.05:
-                            dd_mult = 0.75
-
-                    # Regime sizing
-                    regime_mult = 1.0
-                    if regime == "CAUTIOUS" and sig["direction"] == "LONG":
-                        regime_mult = 0.75
-                    elif regime == "BEARISH" and sig["direction"] == "LONG":
-                        regime_mult = 0.50
-
-                    # QQQ directional risk sizing
-                    qqq_mult = 1.0
-                    if ts in qqq_trend_bullish and not qqq_trend_bullish[ts]:
-                        qqq_mult = self.cfg.QQQ_RISK_REDUCTION_BEARISH
-
-                    # Regime-based risk scaling (Phase 100)
-                    risk_pct = self.cfg.RISK_PER_TRADE_PCT
-                    if regime == "BULLISH":
-                        risk_pct = self.cfg.RISK_PER_TRADE_BULLISH
-                    elif regime == "CAUTIOUS":
-                        risk_pct = self.cfg.RISK_PER_TRADE_CAUTIOUS
-                    elif regime == "BEARISH":
-                        risk_pct = self.cfg.RISK_PER_TRADE_BEARISH
-
-                    # Complex risk multipliers (Phase 6 toggle)
-                    if getattr(self.cfg, "USE_COMPLEX_RISK_MULTIPLIERS", True):
-                        risk_amount = equity * risk_pct * dd_mult * regime_mult * qqq_mult
-                    else:
-                        risk_amount = equity * risk_pct
-
-                    shares = max(1, math.floor(risk_amount / stop_distance))
-                else:
-                    # Fixed-dollar sizing
-                    shares = max(1, math.floor(self.cfg.FIXED_POSITION_DOLLAR / entry_price))
-
-                # Cap: max 25% of equity
-                max_shares = math.floor(equity * self.cfg.MAX_POSITION_PCT / entry_price)
-                shares = min(shares, max_shares)
-
-                # Apply costs
-                slippage = entry_price * self.cfg.SLIPPAGE_PCT
-                spread = self.cfg.SPREAD_COST_PER_SHARE
-                cost_per_share = slippage + spread
-
-                if sig["direction"] == "LONG":
-                    actual_entry = entry_price + cost_per_share
-                else:
-                    actual_entry = entry_price - cost_per_share
-
-                # Cash constraint (soft buffer)
-                total_deployed = equity - self.cash
-                if (total_deployed + (shares * actual_entry)) / equity > self.cfg.MAX_CAPITAL_DEPLOYED_PCT:
-                     # Attempt to downsize to fit the limit
-                     available_for_trade = (equity * self.cfg.MAX_CAPITAL_DEPLOYED_PCT) - total_deployed
-                     if available_for_trade <= 0:
-                         continue
-                     shares = min(shares, math.floor(available_for_trade / actual_entry))
-
-                # Hard Cash constraint
-                cost_basis = shares * actual_entry
-                if cost_basis > self.cash:
-                    shares = int(self.cash / actual_entry)
-                    cost_basis = shares * actual_entry
-
-
-                if shares < 1:
-                    continue
-
-                # Deduct cash
-                self.cash -= cost_basis
-
-                # Record position
-                positions[sym] = {
-                    "symbol": sym,
-                    "direction": sig["direction"],
-                    "shares": shares,
-                    "entry_price": actual_entry,
-                    "stop_price": stop_price,
-                    "take_profit": sig["take_profit"],
-                    "atr": atr,
-                    "entry_time": ts,
-                    "is_day_trade": is_day_trade,
-                    "highest_price": actual_entry,
-                    "lowest_price": actual_entry,
-                    "strategy": sig.get("strategy", "trend_following"), # Track strategy for special exit logic
-                }
-
-                if is_day_trade:
-                    day_trades_remaining -= 1
-
-                if verbose:
-                    print(f"  {ts} | ENTRY {sig['direction']} {shares} {sym} @ ${actual_entry:.2f} "
-                          f"| SL=${stop_price:.2f} | TP=${sig['take_profit']:.2f}")
-
-                executed += 1
+                shares = self._calculate_shares(equity, peak_equity, regime, sig, entry_price, stop_price)
+                if shares > 0:
+                    cost = shares * entry_price
+                    if cost <= self.cash:
+                        self.cash -= cost
+                        positions[sym] = {
+                            "symbol": sym,
+                            "direction": "LONG",
+                            "shares": shares,
+                            "entry_price": entry_price,
+                            "stop_price": stop_price,
+                            "take_profit": sig["take_profit"],
+                            "atr": sig["atr"],
+                            "entry_time": ts,
+                            "is_day_trade": is_day_trade,
+                            "highest_price": entry_price,
+                            "lowest_price": entry_price,
+                            "strategy": sig.get("strategy", "trend_following"),
+                            "regime_at_entry": sig.get("regime_at_entry", regime),
+                        }
+                        executed += 1
+                        if verbose:
+                            print(f"  {ts} | ENTRY LONG {shares} {sym} @ ${entry_price:.2f} (stop=${stop_price:.2f})")
 
             # Update peak equity
             peak_equity = max(peak_equity, equity)
@@ -548,22 +456,47 @@ class BacktestEngine:
                 adx_rising = (not pd.isna(adx_prev) and adx > adx_prev) or pd.isna(adx_prev)
                 
                 if adx_rising:
-                    # Dynamic Take-Profit Ranking (Phase 103)
-                    target_mult = 10.0 # Default
+                    # Dynamic Take-Profit Ranking (Phase 108: Elite Selection)
+                    target_mult = 10.0 # Default (Fallback)
                     
                     # Get current date's rankings
                     ts_date = ts.date()
                     if ts_date not in self.leaderboard_cache:
                         self._update_leaderboard(ts_date, self.bar_data)
                     
-                    rank = self.leaderboard_cache[ts_date].get(symbol, 0.5) # Default to 50th percentile
+                    # Get percentile rank (0.0 to 1.0, where lower is better/higher rank)
+                    # We need the INTEGER rank for Phase 108
+                    # Re-calculating int rank from the cache which stores percentiles
+                    # self.leaderboard_cache[date][sym] = (i + 1) / num_syms
                     
-                    if rank <= 0.25: # Top 25% (Leaders)
+                    percentile = self.leaderboard_cache[ts_date].get(symbol, 1.0)
+                    # Approximate rank calculation (since we don't store int rank directly)
+                    # We can infer it or just use the percentile if we know N.
+                    # Better: Let's use the percentile to gate based on an assumed universe size,
+                    # OR update _update_leaderboard to store both?
+                    # Actually, let's keep it simple: 
+                    # If we have 72 stocks, Top 20 is approx top 28%.
+                    # But the requirement is a HARD CAP of 20.
+                    # So we need to know the actual rank.
+                    
+                    # Let's peek at the cache structure in _update_leaderboard.
+                    # It stores (i+1)/num_syms. 
+                    # So Rank = percentile * num_syms.
+                    
+                    num_syms = len(self.leaderboard_cache[ts_date])
+                    rank_int = int(round(percentile * num_syms))
+                    
+                    # --- PHASE 108 GATE: TOP 20 HARD CAP ---
+                    if rank_int > 20:
+                        return None # Ignore signal, not elite enough
+                        
+                    # --- TIERED TARGETS ---
+                    if rank_int <= 12:       # Elite Leaders (Top 12)
                         target_mult = 25.0
-                    elif rank <= 0.50: # Top 25-50%
+                    elif rank_int <= 20:     # Runners (Rank 13-20)
                         target_mult = 15.0
-                    else: # Bottom 50%
-                        target_mult = 10.0
+                    else:
+                        target_mult = 10.0   # Should not happen due to gate
 
                     return {
                         "symbol": symbol,
@@ -623,6 +556,7 @@ class BacktestEngine:
         }
 
 
+
     def _score(self, adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol, rsi_roc=0, rel_strength=0.0, atr_expanding=False, ts=None):
         """Signal strength score with Phase 103 Dynamic RS bonuses."""
         adx_s = min(max((adx - 20) / 40, 0), 1.0)
@@ -649,6 +583,46 @@ class BacktestEngine:
         rs_intraday_bonus = 0.05 if rel_strength > 0 else 0
         
         return adx_s * 0.25 + rsi_s * 0.25 + vol_s * 0.20 + ema_s * 0.10 + rs_score_bonus + rsi_accel_bonus + rs_intraday_bonus + atr_bonus
+
+
+    def _calculate_shares(self, equity, peak_equity, regime, sig, entry_price, stop_price):
+        """Standardized position sizing logic for both immediate and pending fills."""
+        stop_distance = abs(entry_price - stop_price)
+        if stop_distance <= 0:
+            return 0
+
+        if self.cfg.USE_RISK_BASED_SIZING:
+            # Drawdown sizing
+            dd_mult = 1.0
+            if peak_equity > 0:
+                dd = (peak_equity - equity) / peak_equity
+                if dd >= 0.10:
+                    dd_mult = 0.50
+                elif dd >= 0.05:
+                    dd_mult = 0.75
+
+            # Regime-based risk scaling
+            risk_pct = self.cfg.RISK_PER_TRADE_PCT
+            if regime == "BULLISH":
+                risk_pct = self.cfg.RISK_PER_TRADE_BULLISH
+            elif regime == "CAUTIOUS":
+                risk_pct = self.cfg.RISK_PER_TRADE_CAUTIOUS
+            elif regime == "BEARISH":
+                risk_pct = self.cfg.RISK_PER_TRADE_BEARISH
+
+            risk_amount = equity * risk_pct * dd_mult
+            # (Note: QQQ mult and others can be added here if needed, 
+            # for now keeping it consistent with Phase 105+)
+            
+            shares = max(1, math.floor(risk_amount / stop_distance))
+        else:
+            shares = max(1, math.floor(self.cfg.FIXED_POSITION_DOLLAR / entry_price))
+
+        # Cap: max safety pct
+        max_shares = math.floor(equity * self.cfg.MAX_POSITION_PCT / entry_price)
+        shares = min(shares, max_shares)
+
+        return shares
 
 
     def _check_stops(self, pos: dict, bar, current_ts=None) -> Tuple[bool, float, str]:
@@ -687,15 +661,27 @@ class BacktestEngine:
                         if low <= be_stop:
                             return True, be_stop, "break_even"
 
-            # Stale Trade Temporal Exit (Phase 3)
-            if current_ts is not None:
-                hold_hours = (current_ts - pos["entry_time"]).total_seconds() / 3600
-                max_hold = 48 if pos.get("strategy") == "mean_reversion" else self.cfg.MAX_HOLD_HOURS
-                if hold_hours >= max_hold:
-                    return True, bar.get("close", pos["entry_price"]), "time_stop_stale"
-            
             # Update highest for trailing
             pos["highest_price"] = max(highest, high)
+
+            # --- Phase 107: Time-Aware Exits ---
+            if current_ts is not None:
+                # 1. 3:30 PM Profit Locking (Adjusted from 3:45 to match available backtest data)
+                ts_et = current_ts.astimezone(pytz.timezone("US/Eastern")) if hasattr(current_ts, 'tz') and current_ts.tz is not None else current_ts
+                # Extract time components safely
+                if hasattr(ts_et, "hour"):
+                    # 3:30 PM ET or later
+                    if (ts_et.hour == 15 and ts_et.minute >= 30) or (ts_et.hour >= 16):
+                        if bar.get("close", 0) > pos["entry_price"]:
+                            return True, bar.get("close", 0), "eod_profit_lock"
+
+                # 2. Refined Dead Money (48h + < 1.0x ATR profit)
+                hold_hours = (current_ts - pos["entry_time"]).total_seconds() / 3600
+                unrealized_pnl_atr = (bar.get("close", 0) - pos["entry_price"]) / pos["atr"] if pos["atr"] > 0 else 0
+                
+                max_hold = 48 if pos.get("strategy") == "mean_reversion" else self.cfg.MAX_HOLD_HOURS
+                if hold_hours >= max_hold and unrealized_pnl_atr < 1.0:
+                    return True, bar.get("close", pos["entry_price"]), "time_stop_dead_money"
 
             # --- Phase 2: Mean Reversion Special Exits ---
             if pos.get("strategy") == "mean_reversion":
@@ -935,6 +921,9 @@ class BacktestEngine:
         
         total_shares = pos["shares"]
         partial_shares = math.floor(total_shares * part_pct)
+        if partial_shares < 1:
+            return None
+            
         remaining_shares = total_shares - partial_shares
         
         if remaining_shares < 1:

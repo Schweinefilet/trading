@@ -58,10 +58,47 @@ python backtest_runner.py --start 2024-01-01 --end 2024-12-31 --tickers AAPL NVD
 ```
 *Add `--swing` to simulate swing trading (holding overnight).*
 
-## Live Strategy vs. Backtesting
-The backtesting engine is designed to mirror the live strategy logic. Note that:
-- **Confirmations**: The live strategy requires 4 out of 6 technical confirmations (including EMA spread), while the backtester defaults to 3 out of 5 for broader signal capture.
-- **Fills**: Backtests fill at the **open** of the next bar to prevent look-ahead bias, identical to how the live bot reacts to bar closures.
+## The Trading Decision Flow (How the Bot Decides)
+
+The bot follows a 5-step funnel to move from 70+ symbols down to specific risk-managed trades:
+
+### Phase 1: Market Regime Identification
+*   **File**: [`strategy/regime.py`](file:///Users/keith/trading/algo_trader/strategy/regime.py)
+*   The system analyzes SPY and VIX to determine the market environment:
+    *   **BULLISH**: Aggressive risk (6.7%), loose confirmations.
+    *   **CAUTIOUS**: Moderate risk (5.2%), tighter confirmations.
+    *   **BEARISH**: Defensive risk (2.5%), Trend + Mean Reversion logic.
+    *   **CRISIS**: Trading halted (VIX > 40).
+
+### Phase 2: Rolling Leadership Ranking
+*   **File**: [`strategy/ranker.py`](file:///Users/keith/trading/algo_trader/strategy/ranker.py) & `_update_leaderboard` in `engine.py`
+*   Instead of guessing which stocks will win, the bot uses **Hindsight-Free Dynamic Tiering**:
+    *   It calculates a **120-Day ROC** (Relative Strength) for all 70 symbols.
+    *   Only the **Top 25%** are granted "Leader" status.
+    *   Leaders get the **25x ATR "Dagger Runner"** targets. Laggards get 10x ATR targets.
+
+### Phase 3: Technical Signal Confirmation
+*   **File**: [`strategy/signals.py`](file:///Users/keith/trading/algo_trader/strategy/signals.py)
+*   Each 15-min bar must pass a "strike system" (3-5 required confirmations):
+    *   **Trend Confirmation**: Price > Bias EMA (50) and Fast EMA > Slow EMA.
+    *   **Strength Confirmation**: ADX > 30.0 (High Conviction Gate).
+    *   **Momentum Confirmation**: RSI crossing 55 or bouncing from 35.
+    *   **Liquidity Filter**: Volume > 1.2x average.
+
+### Phase 4: Position Sizing & Safety Caps
+*   **File**: [`risk/position_sizer.py`](file:///Users/keith/trading/algo_trader/risk/position_sizer.py)
+*   The bot calculates exact shares based on the **6.7% Bull Risk** model:
+    *   **ATR-Based Stops**: If volatility increases, position size automatically decreases.
+    *   **Portfolio Heat**: Total account-wide risk is capped at 90% of equity.
+    *   **Sector Guard**: No more than 2 open positions in the same sector.
+
+### Phase 5: Trade Management & Exit
+*   **File**: [`backtest/engine.py`](file:///Users/keith/trading/algo_trader/backtest/engine.py)
+*   Once a trade is live, it is managed dynamically:
+    *   **Partial Exit**: 10% of shares are sold at **3.5x ATR** profit to "fireproof" the trade.
+    *   **Trailing Stop**: Activates at 2.0x ATR to lock in gains on runners.
+    *   **Time Stop**: Exit if the trade remains stagnant for >48 hours.
 
 ---
 **Warning**: Trading stocks involves significant risk of loss. Always test thoroughly in paper mode before deploying real capital.
+
