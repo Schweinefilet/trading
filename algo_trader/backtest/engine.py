@@ -120,6 +120,17 @@ class BacktestEngine:
         # Determine regime at each trading day
         regime_by_date = self._build_regime_map(spy_daily)
 
+        # Build QQQ trend map for risk-sizing filter (Phase 6A)
+        qqq_trend_bullish = {}
+        if "QQQ" in bar_data and not bar_data["QQQ"].empty:
+            qqq_df = bar_data["QQQ"]
+            qqq_ema_fast = qqq_df["close"].ewm(span=self.cfg.QQQ_EMA_FAST, adjust=False).mean()
+            qqq_ema_slow = qqq_df["close"].ewm(span=self.cfg.QQQ_EMA_SLOW, adjust=False).mean()
+            for ts_q, row_q in qqq_df.iterrows():
+                idx_q = qqq_df.index.get_loc(ts_q)
+                if idx_q >= self.cfg.QQQ_EMA_SLOW:
+                    qqq_trend_bullish[ts_q] = qqq_ema_fast.iloc[idx_q] > qqq_ema_slow.iloc[idx_q]
+
         et = pytz.timezone("US/Eastern")
 
         for i, ts in enumerate(sorted_timestamps):
@@ -211,7 +222,7 @@ class BacktestEngine:
                 bar = bar_data[sym].loc[ts]
                 pos = positions[sym]
 
-                hit, exit_price, reason = self._check_stops(pos, bar)
+                hit, exit_price, reason = self._check_stops(pos, bar, current_ts=ts)
                 if hit:
                     pnl = self._close_position(
                         positions, sym, exit_price, ts,
@@ -301,7 +312,12 @@ class BacktestEngine:
                 elif regime == "BEARISH" and sig["direction"] == "LONG":
                     regime_mult = 0.50
 
-                risk_amount = equity * self.cfg.RISK_PER_TRADE_PCT * dd_mult * regime_mult
+                # QQQ directional risk sizing (Phase 6A)
+                qqq_mult = 1.0
+                if ts in qqq_trend_bullish and not qqq_trend_bullish[ts]:
+                    qqq_mult = self.cfg.QQQ_RISK_REDUCTION_BEARISH
+
+                risk_amount = equity * self.cfg.RISK_PER_TRADE_PCT * dd_mult * regime_mult * qqq_mult
                 shares = max(1, math.floor(risk_amount / stop_distance))
 
                 # Cap: max 25% of equity
@@ -466,7 +482,7 @@ class BacktestEngine:
         tier_bonus = tickers.get_tier_bonus(symbol)
         return adx_s * 0.25 + rsi_s * 0.25 + vol_s * 0.20 + ema_s * 0.15 + tier_bonus
 
-    def _check_stops(self, pos: dict, bar) -> Tuple[bool, float, str]:
+    def _check_stops(self, pos: dict, bar, current_ts=None) -> Tuple[bool, float, str]:
         """Check if stop-loss or take-profit was hit during this bar."""
         high = bar.get("high", 0)
         low = bar.get("low", 0)
@@ -486,6 +502,21 @@ class BacktestEngine:
                 if low <= trail_stop:
                     return True, trail_stop, "trailing_stop"
             
+            # Break-even guardrail (Phase 6A)
+            # After hold time threshold, if price reached activation level, move stop to break-even + offset
+            if current_ts is not None and not pos.get("break_even_set", False):
+                hold_delta = current_ts - pos["entry_time"]
+                hold_mins = hold_delta.total_seconds() / 60
+                if hold_mins >= self.cfg.BREAK_EVEN_MIN_HOLD_MINS:
+                    profit_atr = (highest - pos["entry_price"]) / pos["atr"] if pos["atr"] > 0 else 0
+                    if profit_atr >= self.cfg.BREAK_EVEN_ACTIVATE_ATR:
+                        be_stop = pos["entry_price"] + (pos["atr"] * self.cfg.BREAK_EVEN_OFFSET_ATR)
+                        if be_stop > pos["stop_price"]:
+                            pos["stop_price"] = be_stop
+                            pos["break_even_set"] = True
+                            # Re-check if current bar triggers the new BE stop
+                            if low <= be_stop:
+                                return True, be_stop, "break_even"
             
             # Update highest for trailing
             pos["highest_price"] = max(highest, high)
@@ -504,6 +535,19 @@ class BacktestEngine:
                 if high >= trail_stop:
                     return True, trail_stop, "trailing_stop"
             
+            # Break-even guardrail (SHORT, Phase 6A)
+            if current_ts is not None and not pos.get("break_even_set", False):
+                hold_delta = current_ts - pos["entry_time"]
+                hold_mins = hold_delta.total_seconds() / 60
+                if hold_mins >= self.cfg.BREAK_EVEN_MIN_HOLD_MINS:
+                    profit_atr = (pos["entry_price"] - lowest) / pos["atr"] if pos["atr"] > 0 else 0
+                    if profit_atr >= self.cfg.BREAK_EVEN_ACTIVATE_ATR:
+                        be_stop = pos["entry_price"] - (pos["atr"] * self.cfg.BREAK_EVEN_OFFSET_ATR)
+                        if be_stop < pos["stop_price"]:
+                            pos["stop_price"] = be_stop
+                            pos["break_even_set"] = True
+                            if high >= be_stop:
+                                return True, be_stop, "break_even"
             
             pos["lowest_price"] = min(lowest, low)
 

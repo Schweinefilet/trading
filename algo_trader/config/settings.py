@@ -72,13 +72,15 @@ class TradingConfig:
     TRAILING_STOP_ACTIVATE_ATR: float = 2.0
     TRAILING_STOP_ATR: float = 1.5
     
-    # Break-Even Guardrail (Phase 6 - DISCONTINUED)
-    BREAK_EVEN_ACTIVATE_ATR: float = 999.0  # High to disable
-    BREAK_EVEN_OFFSET_ATR: float = 0.0
-    BREAK_EVEN_MIN_HOLD_MINS: int = 999
+    # Break-Even Guardrail (Phase 6A)
+    BREAK_EVEN_ACTIVATE_ATR: float = 1.2    # Move SL to break-even after +1.2x ATR profit
+    BREAK_EVEN_OFFSET_ATR: float = 0.2      # Offset: entry + 0.2x ATR (breathing room)
+    BREAK_EVEN_MIN_HOLD_MINS: int = 30      # Only after 30 min hold time
     
-    # QQQ Directional Risk (Phase 6 - DISCONTINUED)
-    QQQ_RISK_REDUCTION_BEARISH: float = 1.0 # 1.0 = No reduction
+    # QQQ Directional Risk (Phase 6A)
+    QQQ_RISK_REDUCTION_BEARISH: float = 0.5 # Reduce position size by 50% when QQQ bearish
+    QQQ_EMA_FAST: int = 9                   # QQQ fast EMA for trend detection
+    QQQ_EMA_SLOW: int = 21                  # QQQ slow EMA for trend detection
     
     TIME_STOP_MINUTES_BEFORE_CLOSE: int = 15
 
