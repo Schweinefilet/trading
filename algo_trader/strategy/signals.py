@@ -55,53 +55,43 @@ def _score_signal(
     ema_slow: float,
     atr: float,
     symbol: str,
+    rsi_roc: float = 0,
+    rel_strength_rank: float = 0.5,
+    atr_expanding: bool = False,
+    rel_strength_intraday: float = 0,
 ) -> float:
     """
     Compute signal strength score (0.0 to 1.0) for ranking.
-
-    Components (weighted):
-      - ADX strength: 0.25
-      - RSI momentum: 0.25
-      - Volume surge: 0.20
-      - EMA spread: 0.15
-      - Tier bonus: 0.15
+    Synced with BacktestEngine._score logic.
     """
-    # ADX strength: (adx - 20) / 40, capped at 1.0
-    adx_score = min(max((adx - 20) / 40, 0), 1.0)
-
-    # RSI momentum: abs(rsi - 50) / 30, capped at 1.0
-    rsi_score = min(abs(rsi - 50) / 30, 1.0)
-
-    # Volume surge: (volume / vol_sma - 1) / 2, capped at 1.0
-    if volume_sma > 0:
-        vol_score = min(max((volume / volume_sma - 1) / 2, 0), 1.0)
-    else:
-        vol_score = 0.0
-
-    # EMA spread: abs(ema_fast - ema_slow) / atr, capped at 1.0
-    if atr > 0:
-        ema_score = min(abs(ema_fast - ema_slow) / atr, 1.0)
-    else:
-        ema_score = 0.0
-
-    # Tier bonus
-    tier_bonus = tickers.get_tier_bonus(symbol)
-
+    adx_s = min(max((adx - 20) / 40, 0), 1.0)
+    rsi_s = min(abs(rsi - 50) / 30, 1.0)
+    vol_s = min(max((volume / volume_sma - 1) / 2, 0), 1.0) if volume_sma > 0 else 0
+    ema_s = min(abs(ema_fast - ema_slow) / atr, 1.0) if atr > 0 else 0
+    
+    # Phase 103: Dynamic RS Bonus
+    rs_score_bonus = 0.0
+    if rel_strength_rank <= 0.25: # Dynamic Tier 1
+        rs_score_bonus = 0.15
+    elif rel_strength_rank <= 0.50: # Dynamic Tier 2
+        rs_score_bonus = 0.10
+    
+    # RSI acceleration bonus
+    rsi_accel_bonus = 0.05 if (rsi_roc and rsi_roc > 0) else 0
+    # ATR expansion bonus (Phase 7)
+    atr_bonus = 0.05 if atr_expanding else 0
+    # Relative Strength (Intraday) bonus
+    rs_intraday_bonus = 0.05 if rel_strength_intraday > 0 else 0
+    
     score = (
-        adx_score * 0.25
-        + rsi_score * 0.25
-        + vol_score * 0.20
-        + ema_score * 0.15
-        + tier_bonus * 0.15 / 0.15  # Normalize: tier_bonus is already 0-0.15, weight is 0.15
-    )
-
-    # Re-weight properly: tier_bonus goes from 0 to 0.15, treated as the raw component
-    score = (
-        adx_score * 0.25
-        + rsi_score * 0.25
-        + vol_score * 0.20
-        + ema_score * 0.15
-        + tier_bonus  # Already scaled (0.0, 0.10, or 0.15)
+        adx_s * 0.25 
+        + rsi_s * 0.25 
+        + vol_s * 0.20 
+        + ema_s * 0.10 
+        + rs_score_bonus 
+        + rsi_accel_bonus 
+        + rs_intraday_bonus 
+        + atr_bonus
     )
 
     return min(score, 1.0)
@@ -137,18 +127,13 @@ def generate_signals(
     df: pd.DataFrame,
     regime_state: str,
     timestamp: Optional[datetime] = None,
+    rank_int: Optional[int] = None,
+    rank_percentile: float = 0.5,
+    rel_strength_intraday: float = 0,
 ) -> Optional[TradeSignal]:
     """
-    Generate a trade signal for a single symbol on the latest 15-min bar.
-
-    Args:
-        symbol: Ticker symbol
-        df: DataFrame with OHLCV + indicator columns (must have warm-up data)
-        regime_state: Current market regime ("BULLISH", "CAUTIOUS", "BEARISH", "CRISIS")
-        timestamp: Signal timestamp (defaults to last bar's index)
-
-    Returns:
-        TradeSignal if conditions met, None otherwise
+    Generate a trade signal for a single symbol.
+    Synced with BacktestEngine._generate_signal.
     """
     if df.empty or len(df) < 55:
         return None
@@ -168,11 +153,14 @@ def generate_signals(
     close = curr.get("close", np.nan)
     rsi = curr.get("rsi", np.nan)
     rsi_prev = curr.get("rsi_prev", np.nan)
+    rsi_roc = curr.get("rsi_roc", 0)
     adx = curr.get("adx", np.nan)
+    adx_prev = curr.get("adx_prev", np.nan)
     ema_fast = curr.get("ema_fast", np.nan)
     ema_slow = curr.get("ema_slow", np.nan)
     ema_bias = curr.get("ema_bias", np.nan)
     atr = curr.get("atr", np.nan)
+    atr_prev = curr.get("atr_prev", np.nan)
     vwap = curr.get("vwap", np.nan)
     volume = curr.get("volume", np.nan)
     volume_sma = curr.get("volume_sma_20", np.nan)
@@ -182,82 +170,11 @@ def generate_signals(
     if any(pd.isna(v) for v in essentials):
         return None
 
-    # ATR stop multiplier (tighter for SNDK etc.)
-    stop_mult = tickers.get_stop_multiplier(symbol, config.ATR_STOP_MULTIPLIER)
-    target_mult = config.ATR_TARGET_MULTIPLIER
-
-    # === LONG SIGNAL — ALL conditions must be True ===
-    long_signal = _check_long(
-        close, rsi, rsi_prev, adx, ema_fast, ema_slow, ema_bias,
-        volume, volume_sma, vwap, regime_state
-    )
-
-    if long_signal:
-        stop_loss = close - atr * stop_mult
-        take_profit = close + atr * target_mult
-        strength = _score_signal(adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol)
-        reason = long_signal
-
-        return TradeSignal(
-            symbol=symbol,
-            direction=SignalDirection.LONG,
-            signal_strength=strength,
-            entry_price=close,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            atr=atr,
-            timestamp=ts,
-            reason=reason,
-        )
-
-    # === SHORT SIGNAL — ALL conditions must be True ===
-    if config.ALLOW_SHORTS:
-        short_signal = _check_short(
-            close, rsi, rsi_prev, adx, ema_fast, ema_slow, ema_bias,
-            volume, volume_sma, vwap, regime_state
-        )
-
-        if short_signal:
-            stop_loss = close + atr * stop_mult
-            take_profit = close - atr * target_mult
-            strength = _score_signal(adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol)
-            reason = short_signal
-
-            return TradeSignal(
-                symbol=symbol,
-                direction=SignalDirection.SHORT,
-                signal_strength=strength,
-                entry_price=close,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                atr=atr,
-                timestamp=ts,
-                reason=reason,
-            )
-
-    return None
-
-
-def _check_long(
-    close, rsi, rsi_prev, adx, ema_fast, ema_slow, ema_bias,
-    volume, volume_sma, vwap, regime_state
-) -> Optional[str]:
-    """
-    Check all 8 long entry conditions. Returns reason string if all pass, None otherwise.
-
-    1. ADX >= 20 (trend present)
-    2. Price > EMA_BIAS (bullish territory)
-    3. EMA_FAST > EMA_SLOW (short-term uptrend)
-    4. RSI momentum trigger:
-       a. RSI crosses above 55 from below, OR
-       b. RSI bounces from oversold (prev <= 35, current > 35, close > ema_bias)
-    5. Volume >= 1.5x vol_sma_20
-    6. Price > VWAP (if enabled)
-    7. Regime filter: BULLISH or CAUTIOUS
-    8. Trading hours (checked in caller)
-    """
+    # --- 1. Trend Following Strategy (Elite Selection) ---
+    
     # 1. ADX trend strength
-    adx_ok = adx >= 20  # Increased from config to reduce noise
+    adx_ok = adx >= config.ADX_TREND_THRESHOLD
+    adx_rising = (not pd.isna(adx_prev) and adx > adx_prev) or pd.isna(adx_prev)
     
     # 2. Price/EMA bias
     bias_ok = close > ema_bias
@@ -265,78 +182,76 @@ def _check_long(
     # 3. EMA alignment
     ema_ok = ema_fast > ema_slow
     
-    # 4. RSI momentum or oversold bounce + acceleration
+    # 4. RSI momentum or oversold bounce
     rsi_cross_up = (rsi_prev < config.RSI_MOMENTUM_LONG and rsi >= config.RSI_MOMENTUM_LONG)
-    # Refined Bounce: Prev bar must be lower than current to show momentum
-    rsi_bounce = (rsi_prev <= 35 and rsi > 35 and rsi > rsi_prev) 
+    rsi_bounce = (rsi_prev <= 35 and rsi > 35)
     rsi_ok = rsi_cross_up or rsi_bounce
     
     # 5. Volume Surge
     vol_ok = volume >= config.VOLUME_MULTIPLIER * volume_sma
 
-    # 6. EMA Spread (Optional but high-conviction)
-    # Require FAST to be above SLOW by at least 0.1 ATR to avoid "flat" crosses
-    ema_spread_ok = (ema_fast - ema_slow) >= (atr * 0.1)
+    confirmations = sum([adx_ok, bias_ok, ema_ok, rsi_ok, vol_ok])
     
-    # Require 4 of the 6 primary technical confirmations (excluding regime/VWAP)
-    confirmations = sum([adx_ok, bias_ok, ema_ok, rsi_ok, vol_ok, ema_spread_ok])
-    
-    # Adaptive confirmation threshold by regime (Phase 7)
-    from config.settings import config as _cfg
+    # Adaptive confirmation threshold
     if regime_state == "BULLISH":
-        min_confirms = max(3, _cfg.CONFIRMATIONS_BULLISH + 1)   # +1 since live has 6 checks vs backtest 5
+        min_confirms = config.CONFIRMATIONS_BULLISH
     elif regime_state == "CAUTIOUS":
-        min_confirms = max(4, _cfg.CONFIRMATIONS_CAUTIOUS + 1)
+        min_confirms = config.CONFIRMATIONS_CAUTIOUS
     else:
-        min_confirms = max(5, _cfg.CONFIRMATIONS_BEARISH + 1)
-    
-    if confirmations < min_confirms:
-        return None
+        min_confirms = config.CONFIRMATIONS_BEARISH
         
-    # Final Mandatory Filters (VWAP and Regime)
-    if config.USE_VWAP and not pd.isna(vwap) and close <= vwap:
-        return None
-        
-    if config.USE_REGIME_FILTER and not regime_allows_trade(regime_state, "LONG"):
-        return None
+    if (confirmations >= min_confirms and regime_allows_trade(regime_state, "LONG")):
+        if not config.USE_VWAP or pd.isna(vwap) or close > vwap:
+            if adx_rising:
+                # --- PHASE 108 GATE: TOP 20 HARD CAP ---
+                if rank_int is not None and rank_int > 20:
+                    return None # Not elite enough
+                
+                # --- TIERED TARGETS ---
+                target_mult = 10.0 # Default
+                if rank_int is not None:
+                    if rank_int <= 12:       # Elite Leaders
+                        target_mult = 25.0
+                    elif rank_int <= 20:     # Runners
+                        target_mult = 15.0
+                
+                stop_mult = tickers.get_stop_multiplier(symbol, config.ATR_STOP_MULTIPLIER)
+                atr_expanding = (not pd.isna(atr_prev) and atr > atr_prev) or pd.isna(atr_prev)
+                
+                strength = _score_signal(
+                    adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol,
+                    rsi_roc=rsi_roc, rel_strength_rank=rank_percentile, 
+                    atr_expanding=atr_expanding, rel_strength_intraday=rel_strength_intraday
+                )
 
-    trigger = "Cross_Up" if rsi_cross_up else ("Bounce" if rsi_bounce else "Trend")
-    return f"LONG: Confirm={confirmations}/5, Trigger={trigger}, ADX={adx:.1f}"
+                return TradeSignal(
+                    symbol=symbol,
+                    direction=SignalDirection.LONG,
+                    signal_strength=strength,
+                    entry_price=close,
+                    stop_loss=close - atr * stop_mult,
+                    take_profit=close + atr * target_mult,
+                    atr=atr,
+                    timestamp=ts,
+                    reason=f"Trend: Confirm={confirmations}, Rank={rank_int}, ADX={adx:.1f}",
+                )
 
+    # --- 2. Mean Reversion Strategy (Phase 2) ---
+    if regime_state in ["CAUTIOUS", "BEARISH"]:
+        rsi2 = curr.get("rsi_2", np.nan)
+        bb_lower = curr.get("bb_lower", np.nan)
+        if not pd.isna(rsi2) and not pd.isna(bb_lower):
+            if rsi2 < 10 and close < bb_lower:
+                return TradeSignal(
+                    symbol=symbol,
+                    direction=SignalDirection.LONG,
+                    signal_strength=0.85,
+                    entry_price=close,
+                    stop_loss=close - atr * 1.0,
+                    take_profit=close + atr * 4.0, # Higher target for MR
+                    atr=atr,
+                    timestamp=ts,
+                    reason=f"Mean_Reversion: RSI2={rsi2:.1f}, BB_Lower",
+                )
 
-def _check_short(
-    close, rsi, rsi_prev, adx, ema_fast, ema_slow, ema_bias,
-    volume, volume_sma, vwap, regime_state
-) -> Optional[str]:
-    """
-    Check all short entry conditions. Returns reason string if all pass, None otherwise.
-
-    1. ADX >= 20
-    2. Price < EMA_BIAS
-    3. EMA_FAST < EMA_SLOW
-    4. RSI crosses below 45 from above
-    5. Volume >= 1.5x vol_sma_20
-    6. Price < VWAP
-    7. Regime: BEARISH only
-    """
-    if adx < config.ADX_TREND_THRESHOLD:
-        return None
-    if close >= ema_bias:
-        return None
-    if ema_fast >= ema_slow:
-        return None
-
-    rsi_cross_down = (rsi_prev > config.RSI_MOMENTUM_SHORT and rsi <= config.RSI_MOMENTUM_SHORT)
-    if not rsi_cross_down:
-        return None
-
-    if volume < config.VOLUME_MULTIPLIER * volume_sma:
-        return None
-
-    if config.USE_VWAP and not pd.isna(vwap) and close >= vwap:
-        return None
-
-    if config.USE_REGIME_FILTER and regime_state != "BEARISH":
-        return None
-
-    return f"SHORT: RSI_cross_45, ADX={adx:.1f}, RSI={rsi:.1f}, Vol={volume/volume_sma:.1f}x"
+    return None

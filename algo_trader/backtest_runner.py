@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--tickers", nargs="+", default=None, help="Override tickers (space-separated)")
     parser.add_argument("--swing", action="store_true", help="Enable Swing Trading (bold overnight)")
     parser.add_argument("--no-regime", action="store_true", help="Disable Regime Filter (trade anytime)")
+    parser.add_argument("--monthly-deposit", type=float, default=0.0, help="Simulate monthly account funding")
     args = parser.parse_args()
 
     if args.swing:
@@ -109,6 +110,7 @@ def main():
             bar_data, spy_daily,
             start=start, end=end,
             capital=args.capital,
+            monthly_deposit=args.monthly_deposit,
             verbose=args.verbose,
         )
 

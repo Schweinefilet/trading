@@ -15,6 +15,9 @@ from config.settings import TradingConfig, config
 from config.tickers import tickers
 from data.indicators import compute_indicators, compute_regime_indicators
 from backtest.metrics import compute_metrics
+from strategy.signals import generate_signals, SignalDirection
+from strategy.regime import RegimeState
+from risk.position_sizer import calculate_position_size
 
 
 @dataclass
@@ -63,6 +66,7 @@ class BacktestEngine:
         start: datetime = None,
         end: datetime = None,
         capital: float = None,
+        monthly_deposit: float = 0.0,
         verbose: bool = False,
     ) -> Dict:
         """
@@ -182,6 +186,13 @@ class BacktestEngine:
 
                 # Monthly reset
                 if current_month != bar_date.month:
+                    # Apply monthly deposit on month rollover (after first month)
+                    if current_month is not None and monthly_deposit > 0:
+                        self.cash += monthly_deposit
+                        equity += monthly_deposit
+                        if verbose:
+                            print(f"  {ts} | MONTHLY DEPOSIT: ${monthly_deposit:,.2f} | New Equity: ${equity:,.2f}")
+
                     current_month = bar_date.month
                     monthly_pnl = 0.0
 
@@ -374,162 +385,52 @@ class BacktestEngine:
         }
 
     def _generate_signal(self, symbol: str, df: pd.DataFrame, regime: str, ts) -> Optional[dict]:
-        """Generate a signal using the same logic as live strategy."""
+        """Generate a signal using the central strategy logic."""
+        # 1. Update leaderboard if needed for this date (Phase 108)
+        ts_date = ts.date()
+        if ts_date not in self.leaderboard_cache:
+            self._update_leaderboard(ts_date, self.bar_data)
+        
+        # 2. Get RS data
+        rank_percentile = self.leaderboard_cache[ts_date].get(symbol, 1.0)
+        num_syms = len(self.leaderboard_cache[ts_date])
+        rank_int = int(round(rank_percentile * num_syms)) if num_syms > 0 else 999
+        
+        # 3. Calculate Intraday RS
         curr = df.iloc[-1]
-
-        close = curr.get("close", np.nan)
-        rsi = curr.get("rsi", np.nan)
-        rsi_prev = curr.get("rsi_prev", np.nan)
-        adx = curr.get("adx", np.nan)
-        ema_fast = curr.get("ema_fast", np.nan)
-        ema_slow = curr.get("ema_slow", np.nan)
-        ema_bias = curr.get("ema_bias", np.nan)
-        atr = curr.get("atr", np.nan)
-        vwap = curr.get("vwap", np.nan)
-        volume = curr.get("volume", np.nan)
-        volume_sma = curr.get("volume_sma_20", np.nan)
-
-        essentials = [close, rsi, rsi_prev, adx, ema_fast, ema_slow, ema_bias, atr, volume, volume_sma]
-        if any(pd.isna(v) for v in essentials):
-            return None
-
-        stop_mult = tickers.get_stop_multiplier(symbol, self.cfg.ATR_STOP_MULTIPLIER)
-
-        from strategy.regime import regime_allows_trade
-        
-        # RSI acceleration (Phase 7)
-        rsi_roc = curr.get("rsi_roc", 0)
-        if pd.isna(rsi_roc):
-            rsi_roc = 0
-        
-        # 1. ADX trend strength
-        adx_ok = adx >= self.cfg.ADX_TREND_THRESHOLD
-        
-        # 2. Price/EMA bias
-        bias_ok = close > ema_bias
-        
-        # 3. EMA alignment
-        ema_ok = ema_fast > ema_slow
-        
-        # 4. RSI momentum or oversold bounce
-        rsi_cross_up = (rsi_prev < self.cfg.RSI_MOMENTUM_LONG and rsi >= self.cfg.RSI_MOMENTUM_LONG)
-        rsi_bounce = (rsi_prev <= 35 and rsi > 35)
-        rsi_ok = rsi_cross_up or rsi_bounce
-        
-        # 5. Volume Surge
-        vol_ok = volume >= self.cfg.VOLUME_MULTIPLIER * volume_sma
-        
-        # 6. RSI Acceleration (Phase 3 - Moved from Score to Confirmation)
-        rsi_accel_ok = rsi_roc > 0
-        
-        # 7. ATR Expansion (Phase 3 - Volatility confirmation)
-        atr_prev = curr.get("atr_prev", np.nan)
-        atr_expanding = (not pd.isna(atr_prev) and atr > atr_prev) or pd.isna(atr_prev)
-        
-        # Adaptive confirmation threshold (Phase 3: BULLISH 4, CAUTIOUS 5, BEARISH 6)
-        if regime == "BULLISH":
-            min_confirms = self.cfg.CONFIRMATIONS_BULLISH
-        elif regime == "CAUTIOUS":
-            min_confirms = self.cfg.CONFIRMATIONS_CAUTIOUS
-        else:
-            min_confirms = self.cfg.CONFIRMATIONS_BEARISH
-        
-        # Phase 7: Revert to Core 5 Confirmations (RSI Accel/ATR Exp moved to Score)
-        confirmations = sum([adx_ok, bias_ok, ema_ok, rsi_ok, vol_ok])
-        
-        # Relative Strength (Stock ROC vs SPY ROC)
         spy_roc = 0
         stock_roc = curr.get("roc_20", 0)
-        
-        # Look up SPY ROC for the current date
         spy_ts = pd.Timestamp(ts.date())
         if self.spy_daily is not None and not self.spy_daily.empty and spy_ts in self.spy_daily.index:
             spy_roc = self.spy_daily.loc[spy_ts].get("roc_20", 0)
-            
-        rel_strength = stock_roc - spy_roc
+        rel_strength_intraday = stock_roc - spy_roc
+
+        # 4. Call central signal generator
+        sig = generate_signals(
+            symbol=symbol,
+            df=df,
+            regime_state=regime,
+            timestamp=ts,
+            rank_int=rank_int,
+            rank_percentile=rank_percentile,
+            rel_strength_intraday=rel_strength_intraday
+        )
         
-        # LONG check
-        if (confirmations >= min_confirms and regime_allows_trade(regime, "LONG")):
-            if not self.cfg.USE_VWAP or pd.isna(vwap) or close > vwap:
-                # ADX Rising check (Phase 100)
-                adx_prev = curr.get("adx_prev", np.nan)
-                adx_rising = (not pd.isna(adx_prev) and adx > adx_prev) or pd.isna(adx_prev)
-                
-                if adx_rising:
-                    # Dynamic Take-Profit Ranking (Phase 108: Elite Selection)
-                    target_mult = 10.0 # Default (Fallback)
-                    
-                    # Get current date's rankings
-                    ts_date = ts.date()
-                    if ts_date not in self.leaderboard_cache:
-                        self._update_leaderboard(ts_date, self.bar_data)
-                    
-                    # Get percentile rank (0.0 to 1.0, where lower is better/higher rank)
-                    # We need the INTEGER rank for Phase 108
-                    # Re-calculating int rank from the cache which stores percentiles
-                    # self.leaderboard_cache[date][sym] = (i + 1) / num_syms
-                    
-                    percentile = self.leaderboard_cache[ts_date].get(symbol, 1.0)
-                    # Approximate rank calculation (since we don't store int rank directly)
-                    # We can infer it or just use the percentile if we know N.
-                    # Better: Let's use the percentile to gate based on an assumed universe size,
-                    # OR update _update_leaderboard to store both?
-                    # Actually, let's keep it simple: 
-                    # If we have 72 stocks, Top 20 is approx top 28%.
-                    # But the requirement is a HARD CAP of 20.
-                    # So we need to know the actual rank.
-                    
-                    # Let's peek at the cache structure in _update_leaderboard.
-                    # It stores (i+1)/num_syms. 
-                    # So Rank = percentile * num_syms.
-                    
-                    num_syms = len(self.leaderboard_cache[ts_date])
-                    rank_int = int(round(percentile * num_syms))
-                    
-                    # --- PHASE 108 GATE: TOP 20 HARD CAP ---
-                    if rank_int > 20:
-                        return None # Ignore signal, not elite enough
-                        
-                    # --- TIERED TARGETS ---
-                    if rank_int <= 12:       # Elite Leaders (Top 12)
-                        target_mult = 25.0
-                    elif rank_int <= 20:     # Runners (Rank 13-20)
-                        target_mult = 15.0
-                    else:
-                        target_mult = 10.0   # Should not happen due to gate
-
-                    return {
-                        "symbol": symbol,
-                        "direction": "LONG",
-                        "entry_price": close,
-                        "stop_price": close - atr * stop_mult,
-                        "take_profit": close + atr * target_mult,
-                        "atr": atr,
-                        "strength": self._score(adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol, rsi_roc, rel_strength, atr_expanding, ts),
-                        "strategy": "trend_following",
-                        "regime_at_entry": regime # Track for partial exit scaling
-                    }
-
-        # 2. Mean Reversion Logic (Phase 2)
-        if regime in ["CAUTIOUS", "BEARISH"]:
-            rsi2 = curr.get("rsi_2", np.nan)
-            bb_lower = curr.get("bb_lower", np.nan)
-            if not pd.isna(rsi2) and not pd.isna(bb_lower):
-                # Trigger: RSI(2) < 10 (tighter) AND Price < Lower BB
-                if rsi2 < 10 and close < bb_lower:
-                    return {
-                        "symbol": symbol,
-                        "direction": "LONG",
-                        "entry_price": close,
-                        "stop_price": close - atr * 1.0,
-                        "take_profit": close + (atr * 4.0), # Phase 4: Higher target for MR
-                        "atr": atr,
-                        "strength": 0.85,
-                        "strategy": "mean_reversion"
-                    }
+        if sig:
+            return {
+                "symbol": sig.symbol,
+                "direction": sig.direction.value,
+                "entry_price": sig.entry_price,
+                "stop_price": sig.stop_loss,
+                "take_profit": sig.take_profit,
+                "atr": sig.atr,
+                "strength": sig.signal_strength,
+                "strategy": "trend_following" if "Trend" in sig.reason else "mean_reversion",
+                "reason": sig.reason,
+                "regime_at_entry": regime
+            }
         
         return None
-
     def _update_leaderboard(self, date, bar_data_in: Dict[str, pd.DataFrame]):
         """Calculate Relative Strength rankings for all symbols on a specific date."""
         scores = {}
@@ -557,94 +458,41 @@ class BacktestEngine:
 
 
 
-    def _score(self, adx, rsi, volume, volume_sma, ema_fast, ema_slow, atr, symbol, rsi_roc=0, rel_strength=0.0, atr_expanding=False, ts=None):
-        """Signal strength score with Phase 103 Dynamic RS bonuses."""
-        adx_s = min(max((adx - 20) / 40, 0), 1.0)
-        rsi_s = min(abs(rsi - 50) / 30, 1.0)
-        vol_s = min(max((volume / volume_sma - 1) / 2, 0), 1.0) if volume_sma > 0 else 0
-        ema_s = min(abs(ema_fast - ema_slow) / atr, 1.0) if atr > 0 else 0
-        
-        # Phase 103: Dynamic RS Bonus (Hindsight-Free)
-        rs_score_bonus = 0.0
-        if ts is not None:
-            ts_date = ts.date()
-            if ts_date in self.leaderboard_cache:
-                rank = self.leaderboard_cache[ts_date].get(symbol, 0.5)
-                if rank <= 0.25: # Dynamic Tier 1
-                    rs_score_bonus = 0.15
-                elif rank <= 0.50: # Dynamic Tier 2
-                    rs_score_bonus = 0.10
-        
-        # RSI acceleration bonus
-        rsi_accel_bonus = 0.05 if (rsi_roc and rsi_roc > 0) else 0
-        # ATR expansion bonus (Phase 7)
-        atr_bonus = 0.05 if atr_expanding else 0
-        # Relative Strength (Intraday) bonus
-        rs_intraday_bonus = 0.05 if rel_strength > 0 else 0
-        
-        return adx_s * 0.25 + rsi_s * 0.25 + vol_s * 0.20 + ema_s * 0.10 + rs_score_bonus + rsi_accel_bonus + rs_intraday_bonus + atr_bonus
+    # _score is no longer needed as strategy.signals handles it
 
 
     def _calculate_shares(self, equity, peak_equity, regime, sig, entry_price, stop_price):
-        """Standardized position sizing logic for both immediate and pending fills."""
-        stop_distance = abs(entry_price - stop_price)
-        if stop_distance <= 0:
-            return 0
+        """Use central position sizer for consistency."""
+        regime_mult = 1.0
+        if regime == "BEARISH": regime_mult = 0.5
+        elif regime == "CAUTIOUS": regime_mult = 0.75
+        
+        # SPY ATR for Volatility Gating
+        spy_atr = 0.0
+        spy_atr_sma = 0.0
+        spy_df = self.bar_data.get("SPY")
+        if spy_df is not None:
+             try:
+                 ts_idx = spy_df.index.get_indexer([sig["entry_time"] if "entry_time" in sig else pd.Timestamp.now()], method='pad')[0]
+                 if ts_idx >= 14:
+                     spy_atr = spy_df.iloc[ts_idx].get("atr", 0)
+                     spy_atr_sma = spy_df.iloc[ts_idx-14:ts_idx]["atr"].mean()
+             except Exception:
+                 pass
 
-        if self.cfg.USE_RISK_BASED_SIZING:
-            # Drawdown sizing
-            dd_mult = 1.0
-            if peak_equity > 0:
-                dd = (peak_equity - equity) / peak_equity
-                if dd >= 0.10:
-                    dd_mult = 0.50
-                elif dd >= 0.05:
-                    dd_mult = 0.75
-
-            # Phase 112: Dynamic Risk Scaling based on Equity
-            risk_pct = self.cfg.RISK_PER_TRADE_PCT
-            if self.cfg.USE_DYNAMIC_RISK_SCALING:
-                # Find the highest threshold met
-                sorted_steps = sorted(self.cfg.RISK_SCALING_STEPS.keys(), reverse=True)
-                for threshold in sorted_steps:
-                    if equity >= threshold:
-                        risk_pct = self.cfg.RISK_SCALING_STEPS[threshold]
-                        break
-            else:
-                # Legacy Regime-based risk scaling
-                if regime == "BULLISH":
-                    risk_pct = self.cfg.RISK_PER_TRADE_BULLISH
-                elif regime == "CAUTIOUS":
-                    risk_pct = self.cfg.RISK_PER_TRADE_CAUTIOUS
-                elif regime == "BEARISH":
-                    risk_pct = self.cfg.RISK_PER_TRADE_BEARISH
-
-            # Phase 112: Volatility Gating
-            vol_gate_mult = 1.0
-            spy_df = self.bar_data.get("SPY")
-            if spy_df is not None and sig.get("symbol") != "SPY":
-                # Get SPY ATR at entry time
-                try:
-                    ts_idx = spy_df.index.get_indexer([sig["entry_time"]], method='pad')[0]
-                    if ts_idx >= 14:
-                        curr_spy_atr = spy_df.iloc[ts_idx].get("atr", 0)
-                        avg_spy_atr = spy_df.iloc[ts_idx-14:ts_idx]["atr"].mean()
-                        if avg_spy_atr > 0 and curr_spy_atr > avg_spy_atr * self.cfg.VOLATILITY_GATE_ATR_MULT:
-                            vol_gate_mult = 0.50 # Cut risk in half during vol spikes
-                except Exception:
-                    pass
-
-            risk_amount = equity * risk_pct * dd_mult * vol_gate_mult
-            
-            shares = max(1, math.floor(risk_amount / stop_distance))
-        else:
-            shares = max(1, math.floor(self.cfg.FIXED_POSITION_DOLLAR / entry_price))
-
-        # Cap: max safety pct
-        max_shares = math.floor(equity * self.cfg.MAX_POSITION_PCT / entry_price)
-        shares = min(shares, max_shares)
-
-        return shares
+        current_heat = 0 # Engine tracks this differently, but we can approximate or pass 0 for now as it's handled in the run loop mostly
+        # Actually, engine.py run loop currently doesn't track total portfolio heat yet, we should fix that in follow up.
+        
+        return calculate_position_size(
+            equity=equity,
+            entry_price=entry_price,
+            stop_price=stop_price,
+            atr=sig.get("atr", 0),
+            regime_multiplier=regime_mult,
+            peak_equity=peak_equity,
+            spy_atr=spy_atr,
+            spy_atr_sma=spy_atr_sma
+        )
 
 
     def _check_stops(self, pos: dict, bar, current_ts=None) -> Tuple[bool, float, str]:
@@ -824,7 +672,7 @@ class BacktestEngine:
                 entry_date = entry_date.date() if hasattr(entry_date, 'date') else entry_date
             day_trade_dates.append(entry_date)
 
-        return total_pnl
+        return remaining_pnl
 
     def _count_day_trades(self, day_trade_dates: list, current_date) -> int:
         """Count day trades in the last 5 business days."""

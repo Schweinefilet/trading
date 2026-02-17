@@ -16,9 +16,12 @@ def calculate_position_size(
     peak_equity: float = None,
     current_deployed: float = 0.0,
     current_portfolio_heat: float = 0.0,
+    spy_atr: float = 0.0,
+    spy_atr_sma: float = 0.0,
 ) -> int:
     """
     Calculate position size in shares with all safety caps.
+    Includes Phase 112 Volatility Gating.
 
     Args:
         equity: Current account equity
@@ -29,6 +32,8 @@ def calculate_position_size(
         peak_equity: High-water mark equity (for drawdown sizing)
         current_deployed: Sum of all open position values
         current_portfolio_heat: Current total dollars at risk across positions
+        spy_atr: Current SPY ATR (for volatility gating)
+        spy_atr_sma: Moving average of SPY ATR (for volatility gating)
 
     Returns:
         Number of shares (0 if trade should be skipped)
@@ -36,8 +41,14 @@ def calculate_position_size(
     if entry_price <= 0 or equity <= 0:
         return 0
 
+    # Phase 112: Volatility Gating
+    vol_gate_mult = 1.0
+    if spy_atr > 0 and spy_atr_sma > 0:
+        if spy_atr > spy_atr_sma * config.VOLATILITY_GATE_ATR_MULT:
+            vol_gate_mult = 0.50 # Cut risk in half during vol spikes
+
     # Base risk amount
-    risk_amount = equity * config.RISK_PER_TRADE_PCT * regime_multiplier
+    risk_amount = equity * config.RISK_PER_TRADE_PCT * regime_multiplier * vol_gate_mult
     stop_distance = abs(entry_price - stop_price)
 
     if stop_distance <= 0:
