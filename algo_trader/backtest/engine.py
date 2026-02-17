@@ -601,18 +601,40 @@ class BacktestEngine:
                 elif dd >= 0.05:
                     dd_mult = 0.75
 
-            # Regime-based risk scaling
+            # Phase 112: Dynamic Risk Scaling based on Equity
             risk_pct = self.cfg.RISK_PER_TRADE_PCT
-            if regime == "BULLISH":
-                risk_pct = self.cfg.RISK_PER_TRADE_BULLISH
-            elif regime == "CAUTIOUS":
-                risk_pct = self.cfg.RISK_PER_TRADE_CAUTIOUS
-            elif regime == "BEARISH":
-                risk_pct = self.cfg.RISK_PER_TRADE_BEARISH
+            if self.cfg.USE_DYNAMIC_RISK_SCALING:
+                # Find the highest threshold met
+                sorted_steps = sorted(self.cfg.RISK_SCALING_STEPS.keys(), reverse=True)
+                for threshold in sorted_steps:
+                    if equity >= threshold:
+                        risk_pct = self.cfg.RISK_SCALING_STEPS[threshold]
+                        break
+            else:
+                # Legacy Regime-based risk scaling
+                if regime == "BULLISH":
+                    risk_pct = self.cfg.RISK_PER_TRADE_BULLISH
+                elif regime == "CAUTIOUS":
+                    risk_pct = self.cfg.RISK_PER_TRADE_CAUTIOUS
+                elif regime == "BEARISH":
+                    risk_pct = self.cfg.RISK_PER_TRADE_BEARISH
 
-            risk_amount = equity * risk_pct * dd_mult
-            # (Note: QQQ mult and others can be added here if needed, 
-            # for now keeping it consistent with Phase 105+)
+            # Phase 112: Volatility Gating
+            vol_gate_mult = 1.0
+            spy_df = self.bar_data.get("SPY")
+            if spy_df is not None and sig.get("symbol") != "SPY":
+                # Get SPY ATR at entry time
+                try:
+                    ts_idx = spy_df.index.get_indexer([sig["entry_time"]], method='pad')[0]
+                    if ts_idx >= 14:
+                        curr_spy_atr = spy_df.iloc[ts_idx].get("atr", 0)
+                        avg_spy_atr = spy_df.iloc[ts_idx-14:ts_idx]["atr"].mean()
+                        if avg_spy_atr > 0 and curr_spy_atr > avg_spy_atr * self.cfg.VOLATILITY_GATE_ATR_MULT:
+                            vol_gate_mult = 0.50 # Cut risk in half during vol spikes
+                except Exception:
+                    pass
+
+            risk_amount = equity * risk_pct * dd_mult * vol_gate_mult
             
             shares = max(1, math.floor(risk_amount / stop_distance))
         else:

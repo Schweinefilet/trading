@@ -16,6 +16,7 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.data.enums import Adjustment
 
 from config.settings import config
+from utils.api_retry import with_retry
 
 
 class RateLimiter:
@@ -81,6 +82,7 @@ class HistoricalDataClient:
         h = hashlib.md5(key.encode()).hexdigest()[:12]
         return self._cache_dir / f"{symbol}_{timeframe}_{h}.parquet"
 
+    @with_retry(max_retries=3, base_delay=2.0)
     def fetch_bars(
         self,
         symbol: str,

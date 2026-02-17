@@ -20,12 +20,14 @@ from config.tickers import tickers
 from data.historical import HistoricalDataClient, parse_timeframe
 from data.indicators import compute_indicators, compute_regime_indicators
 from data.stream import DataStream
+from data.validation import DataValidator
 from strategy.signals import generate_signals
 from strategy.regime import get_regime, get_position_size_multiplier, regime_allows_trade
 from strategy.ranker import SignalRanker
 from risk.position_sizer import calculate_position_size, calculate_risk_dollars
 from risk.circuit_breaker import CircuitBreaker
 from risk.pdt_tracker import PDTTracker
+from risk.validation import PreTradeValidator
 from risk.portfolio_heat import PortfolioHeatManager, Position
 from execution.order_manager import OrderManager
 from execution.reconciliation import Reconciler
@@ -56,6 +58,8 @@ class TradingBot:
         self.heat_manager = PortfolioHeatManager()
         self.ranker = SignalRanker()
         self.hist_client = HistoricalDataClient()
+        self.validator = DataValidator()
+        self.pre_trade_validator = PreTradeValidator()
 
         # State
         self.equity = config.STARTING_CAPITAL
@@ -63,6 +67,7 @@ class TradingBot:
         self.regime_state = "BULLISH"
         self.spy_bars = None
         self.bar_data = {}  # Warm-up data per symbol
+        self.quotes = {}    # Latest bid/ask per symbol
         self.last_heartbeat = time.monotonic()
         self.daily_pnl = 0.0
         self.daily_trades = 0
@@ -87,6 +92,8 @@ class TradingBot:
 
         # Start data stream
         self.data_stream.on_bar(self._on_bar)
+        self.data_stream.on_quote(self._on_quote)
+        self.data_stream.on_connect(self._reconcile)
         self.data_stream.start()
 
         # Reset daily circuit breaker
@@ -145,17 +152,26 @@ class TradingBot:
         if recon["account"]:
             self.equity = recon["account"].get("equity", self.equity)
 
-        # Update positions
+        # Update OrderManager (which also updates positions locally)
+        self.order_manager.sync_state(recon["positions"], recon["orders"])
+
+        # Update HeatManager
         self.heat_manager.clear()
         for sym, pos_data in recon["positions"].items():
+            # Create a Position object for heat tracking
+            # We don't have stop_price from Alpaca's simple position fetch, 
+            # we'll have to either find it from orders or use a default.
+            # For now, we'll use a 0.0 stop_price which means maximum risk (conservative for heat)
             pos = Position(
                 symbol=sym,
-                shares=pos_data.get("qty", 0),
-                entry_price=pos_data.get("entry_price", 0),
-                stop_price=0,  # Will be updated from order data
-                side=pos_data.get("side", "long"),
+                shares=pos_data["qty"],
+                entry_price=pos_data["entry_price"],
+                stop_price=0.0, # Unknown
+                side=pos_data["side"].upper(),
             )
             self.heat_manager.add_position(pos)
+
+        logger.info(f"Reconciliation complete. Positions: {len(self.heat_manager.positions)}")
 
         # Rebuild PDT counter from fills
         fills = self.reconciler.get_recent_fills(days=7)
@@ -195,6 +211,12 @@ class TradingBot:
 
     def _on_bar(self, symbol: str, bar_dict: dict):
         """Handle incoming bar from stream."""
+        # Phase 113: Validate incoming bar
+        is_valid, reason = self.validator.validate_bar(symbol, bar_dict)
+        if not is_valid:
+            logger.warning(f"Skipping invalid bar for {symbol}: {reason}")
+            return
+
         try:
             # Update bar data
             import pandas as pd
@@ -213,6 +235,10 @@ class TradingBot:
 
         except Exception as e:
             logger.error(f"Error processing bar for {symbol}: {e}")
+
+    def _on_quote(self, symbol: str, quote_dict: dict):
+        """Handle incoming quote from stream."""
+        self.quotes[symbol] = quote_dict
 
     def run_loop(self):
         """Main trading loop. Runs until stopped."""
@@ -321,6 +347,34 @@ class TradingBot:
             logger.info(f"Skipping {sig.symbol}: {reason}")
             return
 
+        # Phase 113: Final 7-Point Validation Gate
+        pdt_status = self.pdt_tracker.get_status(self.equity)
+        can_trade_cb, _ = self.circuit_breaker.can_trade(self.equity)
+        
+        # Determine last bar time for freshness check
+        last_bar_time = datetime.now()
+        if sig.symbol in self.bar_data:
+            last_bar_time = self.bar_data[sig.symbol].index[-1]
+
+        is_valid, reason = self.pre_trade_validator.validate(
+            symbol=sig.symbol,
+            side="buy" if sig.direction.value == "LONG" else "sell",
+            qty=shares,
+            price=sig.entry_price,
+            stop_loss=sig.stop_loss,
+            equity=self.equity,
+            pdt_status=pdt_status,
+            heat_summary=heat_summary,
+            circuit_breaker_ok=can_trade_cb,
+            last_bar_time=last_bar_time,
+            quote=self.quotes.get(sig.symbol),
+        )
+
+        if not is_valid:
+            logger.warning(f"Trade REJECTED by 7-Point Validation for {sig.symbol}: {reason}")
+            alerts.error(f"Trade Rejected: {sig.symbol} - {reason}", "risk")
+            return
+
         # Submit bracket order
         side = "buy" if sig.direction.value == "LONG" else "sell"
         order_id = self.order_manager.submit_bracket_order(
@@ -381,6 +435,35 @@ class TradingBot:
             regime=self.regime_state,
             connected=connected,
         )
+
+        # telemetry and state saving
+        telemetry = {
+            "equity": self.equity,
+            "daily_pnl": self.daily_pnl,
+            "positions_count": len(self.heat_manager.positions),
+            "heat_pct": heat_summary.get("heat_pct", 0),
+            "regime": self.regime_state,
+            "connected": connected,
+            "trades_today": self.daily_trades,
+            "day_trades_used": pdt_status.get("day_trades_used", 0)
+        }
+        alerts.performance_telemetry(telemetry)
+
+        # Save current state for dashboard
+        try:
+            import json
+            state_file = config.BASE_DIR / "logs" / "state.json"
+            state = {
+                "last_update": datetime.now().isoformat(),
+                "metrics": telemetry,
+                "positions": positions_dict,
+                "pdt": pdt_status,
+                "regime": self.regime_state
+            }
+            with open(state_file, "w") as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save state: {e}")
 
         # Check stream health
         if connected and self.data_stream.seconds_since_last_data() > 120:

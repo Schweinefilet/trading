@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from config.settings import config
 from config.tickers import tickers
+from utils.api_retry import with_retry
 
 
 @dataclass
@@ -80,6 +81,7 @@ class OrderManager:
             except Exception as e:
                 print(f"  [OrderManager] Callback error: {e}")
 
+    @with_retry(max_retries=3, base_delay=1.0)
     def submit_bracket_order(
         self,
         symbol: str,
@@ -161,6 +163,7 @@ class OrderManager:
             self._notify("order_error", {"symbol": symbol, "error": str(e)})
             return None
 
+    @with_retry(max_retries=5, base_delay=1.0)
     def submit_market_close(self, symbol: str, qty: int, side: str) -> Optional[str]:
         """
         Submit a market order to close a position (used for EOD liquidation).
@@ -197,6 +200,7 @@ class OrderManager:
             print(f"  [OrderManager] ERROR closing {symbol}: {e}")
             return None
 
+    @with_retry(max_retries=3, base_delay=2.0)
     def cancel_all_orders(self):
         """Cancel all open orders."""
         if not self._client:
@@ -208,6 +212,7 @@ class OrderManager:
         except Exception as e:
             print(f"  [OrderManager] Error canceling orders: {e}")
 
+    @with_retry(max_retries=3, base_delay=2.0)
     def close_all_positions(self):
         """Close all open positions at market price."""
         if not self._client:
@@ -273,6 +278,42 @@ class OrderManager:
                     "side": order.side, "qty": filled_qty,
                     "price": filled_price, "timestamp": timestamp,
                 })
+
+    def sync_state(self, server_positions: Dict[str, dict], server_orders: Dict[str, dict]):
+        """
+        Synchronize local state with server data (used by Reconciler).
+        """
+        with self._lock:
+            # Rebuild positions
+            self._positions.clear()
+            for sym, data in server_positions.items():
+                self._positions[sym] = PositionState(
+                    symbol=sym,
+                    side=data["side"].lower(),
+                    qty=data["qty"],
+                    entry_price=data["entry_price"],
+                    entry_time=datetime.now(), # Approximate if unknown
+                    stop_price=0, # Unknown from basic position fetch
+                    take_profit_price=0,
+                    atr=0,
+                    is_day_trade=True, # Default to day trade for safety
+                    highest_price=data["current_price"],
+                )
+
+            # Rebuild open orders
+            for oid, data in server_orders.items():
+                if oid not in self._orders:
+                    self._orders[oid] = OrderState(
+                        order_id=oid,
+                        symbol=data["symbol"],
+                        side=data["side"].lower(),
+                        qty=data["qty"],
+                        order_type=data["type"].lower(),
+                        limit_price=data["limit_price"],
+                        stop_price=data["stop_price"],
+                        status=data["status"].lower(),
+                        submitted_at=datetime.now(),
+                    )
 
     def get_positions(self) -> Dict[str, PositionState]:
         """Get all tracked positions."""

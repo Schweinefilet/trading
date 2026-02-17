@@ -99,6 +99,7 @@ class DataStream:
         self._reconnect_delay = config.WEBSOCKET_RECONNECT_DELAY
         self._bar_callbacks: List[Callable] = []
         self._quote_callbacks: List[Callable] = []
+        self._connect_callbacks: List[Callable] = []
         self._new_bar_event = threading.Event()
 
     def on_bar(self, callback: Callable):
@@ -108,6 +109,10 @@ class DataStream:
     def on_quote(self, callback: Callable):
         """Register a callback for new quote events."""
         self._quote_callbacks.append(callback)
+
+    def on_connect(self, callback: Callable):
+        """Register a callback for connection events."""
+        self._connect_callbacks.append(callback)
 
     def _create_stream(self) -> StockDataStream:
         """Create a new WebSocket stream instance."""
@@ -173,6 +178,13 @@ class DataStream:
 
                 print(f"  [DataStream] Connected. Subscribed to {len(all_symbols)} symbols.")
                 self._reconnect_delay = config.WEBSOCKET_RECONNECT_DELAY  # Reset delay
+
+                # Notify connect callbacks
+                for cb in self._connect_callbacks:
+                    try:
+                        cb()
+                    except Exception as e:
+                        print(f"  [DataStream] Connect callback error: {e}")
 
                 self._stream.run()
 

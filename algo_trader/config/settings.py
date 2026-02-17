@@ -24,14 +24,14 @@ class TradingConfig:
     ALPACA_SECRET_KEY: str = field(default_factory=lambda: os.getenv("ALPACA_SECRET_KEY", ""))
     BASE_URL_PAPER: str = "https://paper-api.alpaca.markets"
     BASE_URL_LIVE: str = "https://api.alpaca.markets"
-    DATA_FEED: str = "iex"  # "iex" (free) or "sip" ($99/mo, required for live)
+    DATA_FEED: str = "sip"  # "iex" (free) or "sip" ($99/mo, required for live)
     MAX_API_CALLS_PER_MIN: int = 200
     WEBSOCKET_PING_INTERVAL: int = 10
     WEBSOCKET_PING_TIMEOUT: int = 180
     WEBSOCKET_RECONNECT_DELAY: int = 5  # seconds, doubles on each retry up to 60s
 
     # === TIMEFRAMES ===
-    PRIMARY_TIMEFRAME: str = "15Min"       # Signal generation
+    PRIMARY_TIMEFRAME: str = "1Hour"       # Signal generation (Audit Mode)
     ENTRY_TIMEFRAME: str = "5Min"          # Entry timing refinement
     BIAS_TIMEFRAME: str = "1Hour"          # Directional bias
     ATR_PERIOD: int = 14
@@ -113,9 +113,16 @@ class TradingConfig:
     MAX_SECTOR_POSITIONS: int = 2       # Max correlated trades per sector
     
     # === RISK MANAGEMENT ===
-    RISK_PER_TRADE_BULLISH: float = 0.067  # Phase 108 Optimized
-    RISK_PER_TRADE_CAUTIOUS: float = 0.055 # Phase 108 Optimized
     RISK_PER_TRADE_BEARISH: float = 0.025  
+    
+    # === PHASE 112: RISK SCALING & VOL GATING ===
+    USE_DYNAMIC_RISK_SCALING: bool = True
+    RISK_SCALING_STEPS: Dict[float, float] = field(default_factory=lambda: {
+        0.0: 0.067,      # < $100k: 6.7%
+        100_000.0: 0.040, # $100k - $250k: 4.0%
+        250_000.0: 0.025  # > $250k: 2.5%
+    })
+    VOLATILITY_GATE_ATR_MULT: float = 1.5   # Cut size if SPY ATR > 1.5x Avg
     
     RISK_PER_TRADE_PCT: float = 0.067      # Fallback
     MAX_POSITION_PCT: float = 0.60         
@@ -170,16 +177,29 @@ class TradingConfig:
     WALK_FORWARD_OUT_SAMPLE_DAYS: int = 30
     WALK_FORWARD_STEP_DAYS: int = 30
 
-    # === MONITORING ===
+    # === MONITORING & ALERTS ===
+    HEARTBEAT_INTERVAL_SEC: int = 60
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "logs/trading_{date}.log"
+    
+    # Alert Channels
     ALERT_ON_TRADE: bool = True
     ALERT_ON_CIRCUIT_BREAKER: bool = True
     ALERT_ON_ERROR: bool = True
-    HEARTBEAT_INTERVAL_SEC: int = 60
+    
+    # Discord
+    DISCORD_WEBHOOK_URL: str = field(default_factory=lambda: os.getenv("DISCORD_WEBHOOK_URL", ""))
+    
+    # Email (Optional)
+    EMAIL_ENABLE: bool = False
+    EMAIL_SMTP_HOST: str = field(default_factory=lambda: os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com"))
+    EMAIL_SMTP_PORT: int = 587
+    EMAIL_USER: str = field(default_factory=lambda: os.getenv("EMAIL_USER", ""))
+    EMAIL_PASS: str = field(default_factory=lambda: os.getenv("EMAIL_PASS", ""))
+    EMAIL_TO: str = field(default_factory=lambda: os.getenv("EMAIL_TO", ""))
 
     # === NOTIFICATIONS ===
-    DISCORD_WEBHOOK_URL: str = field(default_factory=lambda: os.getenv("DISCORD_WEBHOOK_URL", ""))
+    # (Discord moved to Monitoring section)
 
     # === PATHS ===
     BASE_DIR: Path = field(default_factory=lambda: Path(__file__).parent.parent)

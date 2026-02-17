@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from config.settings import config
+from utils.api_retry import with_retry
 
 
 class Reconciler:
@@ -21,6 +22,7 @@ class Reconciler:
         """Set the Alpaca trading client."""
         self._client = trading_client
 
+    @with_retry(max_retries=3, base_delay=2.0)
     def reconcile(
         self,
         local_positions: Dict[str, dict],
@@ -142,6 +144,7 @@ class Reconciler:
             "warnings": warnings,
         }
 
+    @with_retry(max_retries=3, base_delay=2.0)
     def get_recent_fills(self, days: int = 5) -> List[Dict]:
         """
         Fetch recent fill activities for PDT counter rebuild.
