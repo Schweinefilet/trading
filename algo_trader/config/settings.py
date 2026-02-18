@@ -42,21 +42,21 @@ class TradingConfig:
     HOLD_OVERNIGHT: bool = False           # If True, ignore EOD close and hold positions
     USE_REGIME_FILTER: bool = True         # If True, block trades based on SPY trend
     # RSI (primary oscillator)
-    RSI_PERIOD: int = 14                   # Smoother signal
+    RSI_PERIOD: int = 20                   # Iteration 31: Max Smoothing
     RSI_OVERBOUGHT: float = 70.0
     RSI_OVERSOLD: float = 30.0
-    RSI_MOMENTUM_LONG: float = 50.0        # RSI rising above this = momentum confirmation
+    RSI_MOMENTUM_LONG: float = 50.0        # Reverted from 60.0
     RSI_MOMENTUM_SHORT: float = 45.0       # RSI falling below this = bearish momentum
 
     # ADX (trend strength filter)
-    ADX_PERIOD: int = 14
-    ADX_TREND_THRESHOLD: float = 30.0      # Phase 108 Optimized
+    ADX_PERIOD: int = 10                   # Iteration 19 Base (High Return)
+    ADX_TREND_THRESHOLD: float = 35.0      # Reverted to Best-of-Phase-3
 
 
 
     # EMAs (trend direction)
-    EMA_FAST: int = 9
-    EMA_SLOW: int = 21
+    EMA_FAST: int = 13
+    EMA_SLOW: int = 34
     EMA_BIAS: int = 50                     # On 15-min: ~12.5 hours of data
 
     # VWAP
@@ -66,17 +66,20 @@ class TradingConfig:
     VOLUME_MULTIPLIER: float = 1.2         # Signal requires volume >= 1.2x 20-bar average
 
     # === EXIT RULES ===
-    MIN_REWARD_RISK_RATIO: float = 2.0     
-    ATR_STOP_MULTIPLIER: float = 3.0       # Phase 102: Tightened to 3.0 to maximize size
-    ATR_TARGET_MULTIPLIER: float = 25.0    # Phase 108 Optimized (Leaders)
+    MIN_REWARD_RISK_RATIO: float = 0.9     # Iteration 24: High-Probability Target
+    ATR_STOP_MULTIPLIER: float = 3.2       # Iteration 22: More Breathing Room
+    ATR_TARGET_MULTIPLIER: float = 25.0    # Phase 108 Optimized (Leaders) (Legacy)
+    ELITE_SELECTION_TOP: int = 10           # Limits "Elite Selection" to top N ranked tickers
+    TARGET_MULT_ELITE: float = 25.0         # Target ATR multiple for Top 5 Elite
+    TARGET_MULT_RUNNERS: float = 15.0       # Target ATR multiple for Rank 6-10 Runners
     
     # Trailing Stop Rules
-    TRAILING_STOP_ACTIVATE_ATR: float = 2.0
-    TRAILING_STOP_ATR: float = 1.5
+    TRAILING_STOP_ACTIVATE_ATR: float = 1.8    # Iteration 25: Earlier Activation
+    TRAILING_STOP_ATR: float = 1.2            # Iteration 25: Tighter Lock
     
     # Break-Even Guardrail (Phase 6A)
-    BREAK_EVEN_ACTIVATE_ATR: float = 1.2    # Move SL to break-even after +1.2x ATR profit
-    BREAK_EVEN_OFFSET_ATR: float = 0.2      # Reverted to 0.2 ATR (provide breathing room)
+    BREAK_EVEN_ACTIVATE_ATR: float = 0.8    # Iteration 14: Earlier BE move
+    BREAK_EVEN_OFFSET_ATR: float = 0.1      # Iteration 14: Tighter offset
     BREAK_EVEN_MIN_HOLD_MINS: int = 30      # Only after 30 min hold time
     
     # QQQ Directional Risk (Phase 6A)
@@ -97,8 +100,8 @@ class TradingConfig:
 
     
     # Adaptive Confirmations (Phase 7: 3/3/3 out of 5 - Core Only)
-    CONFIRMATIONS_BULLISH: int = 3
-    CONFIRMATIONS_CAUTIOUS: int = 3
+    CONFIRMATIONS_BULLISH: int = 4
+    CONFIRMATIONS_CAUTIOUS: int = 4
     CONFIRMATIONS_BEARISH: int = 3
 
 
@@ -109,7 +112,7 @@ class TradingConfig:
     ENTRY_SKIPPED_DAYS: List[int] = field(default_factory=lambda: [1])  # Skip Tuesdays (Phase 2 analysis)
 
     # Phase 3 Sharpening
-    MAX_HOLD_HOURS: int = 48            # Phase 7: Tighter time-stop for efficiency
+    MAX_HOLD_HOURS: int = 48            # Reverted for Trend Following
     MAX_SECTOR_POSITIONS: int = 2       # Max correlated trades per sector
     
     # === RISK MANAGEMENT ===
@@ -145,7 +148,7 @@ class TradingConfig:
     MONTHLY_LOSS_LIMIT_PCT: float = 0.06
     MAX_CONSECUTIVE_LOSSES: int = 3
     DRAWDOWN_REDUCE_SIZE_PCT: float = 0.10 # At 10% drawdown, reduce to 50% size
-    DRAWDOWN_HALT_PCT: float = 0.15        # At 15% drawdown, halt all trading
+    DRAWDOWN_HALT_PCT: float = 0.25        # Relaxed for Phase 2 Analysis
     DRAWDOWN_PAPER_ONLY_PCT: float = 0.20  # At 20% drawdown, return to paper
 
     # === PDT COMPLIANCE ===

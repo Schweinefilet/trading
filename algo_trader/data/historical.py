@@ -76,11 +76,33 @@ class HistoricalDataClient:
         self._rate_limiter = RateLimiter(config.MAX_API_CALLS_PER_MIN)
         self._cache_dir = config.CACHE_DIR
 
-    def _cache_key(self, symbol: str, timeframe: str, start: str, end: str) -> Path:
-        """Generate a cache file path for a data request."""
+    def _master_cache_path(self, symbol: str, timeframe_str: str) -> Path:
+        """Generate a master cache file path for a symbol+timeframe (date-independent)."""
+        return self._cache_dir / f"{symbol}_{timeframe_str}.parquet"
+
+    def _legacy_cache_key(self, symbol: str, timeframe: str, start: str, end: str) -> Path:
+        """Legacy cache key for backward compatibility during migration."""
         key = f"{symbol}_{timeframe}_{start}_{end}"
         h = hashlib.md5(key.encode()).hexdigest()[:12]
         return self._cache_dir / f"{symbol}_{timeframe}_{h}.parquet"
+
+    def _load_master_cache(self, cache_path: Path) -> pd.DataFrame:
+        """Load master cache file, returning empty DataFrame if not found or corrupted."""
+        if cache_path.exists():
+            try:
+                df = pd.read_parquet(cache_path)
+                if not df.empty:
+                    return df
+            except Exception:
+                pass  # Corrupted, will re-fetch
+        return pd.DataFrame()
+
+    def _save_master_cache(self, df: pd.DataFrame, cache_path: Path):
+        """Save DataFrame to master cache file."""
+        try:
+            df.to_parquet(cache_path)
+        except Exception as e:
+            print(f"  [HistoricalData] Cache write error: {e}")
 
     @with_retry(max_retries=3, base_delay=2.0)
     def fetch_bars(
@@ -92,7 +114,14 @@ class HistoricalDataClient:
         use_cache: bool = True,
     ) -> pd.DataFrame:
         """
-        Fetch historical bars for a single symbol.
+        Fetch historical bars for a single symbol with incremental caching.
+
+        Uses one master cache file per symbol+timeframe. On each call:
+        1. Loads existing cached data
+        2. Determines what date ranges are missing
+        3. Fetches only the missing delta from the API
+        4. Merges and saves the updated cache
+        5. Returns the slice matching [start, end]
 
         Args:
             symbol: Ticker symbol
@@ -105,18 +134,85 @@ class HistoricalDataClient:
             DataFrame with columns: open, high, low, close, volume, vwap, trade_count
         """
         tf_str = f"{timeframe.amount}{timeframe.unit.value}"
-        cache_path = self._cache_key(symbol, tf_str, start.strftime("%Y%m%d"), end.strftime("%Y%m%d"))
+        master_path = self._master_cache_path(symbol, tf_str)
 
-        # Check cache
-        if use_cache and cache_path.exists():
-            try:
-                df = pd.read_parquet(cache_path)
-                if not df.empty:
-                    return df
-            except Exception:
-                pass  # Cache corrupted, refetch
+        cached_df = pd.DataFrame()
+        if use_cache:
+            cached_df = self._load_master_cache(master_path)
 
-        # Fetch from API with pagination
+        # Determine what needs fetching
+        fetch_ranges = []  # list of (fetch_start, fetch_end) tuples
+
+        if cached_df.empty:
+            # No cache at all — fetch entire range
+            fetch_ranges.append((start, end))
+        else:
+            cache_start = cached_df.index.min()
+            cache_end = cached_df.index.max()
+
+            # Normalize start/end to match cache timezone
+            req_start = pd.Timestamp(start)
+            req_end = pd.Timestamp(end)
+            if req_start.tz is None and cache_start.tz is not None:
+                req_start = req_start.tz_localize(cache_start.tz)
+            if req_end.tz is None and cache_end.tz is not None:
+                req_end = req_end.tz_localize(cache_end.tz)
+
+            # Fetch data before cache range
+            if req_start < cache_start:
+                # Fetch from request start up to cache start
+                fetch_end_pre = cache_start.to_pydatetime().replace(tzinfo=None) - timedelta(seconds=1)
+                fetch_ranges.append((start, fetch_end_pre))
+
+            # Fetch data after cache range
+            if req_end > cache_end:
+                # Fetch from cache end onwards
+                fetch_start_post = cache_end.to_pydatetime().replace(tzinfo=None) + timedelta(seconds=1)
+                fetch_ranges.append((fetch_start_post, end))
+
+        # Fetch missing ranges from API
+        new_chunks = []
+        for fetch_start, fetch_end in fetch_ranges:
+            chunk = self._fetch_from_api(symbol, timeframe, fetch_start, fetch_end)
+            if not chunk.empty:
+                new_chunks.append(chunk)
+
+        # Merge with existing cache
+        if new_chunks:
+            all_parts = [cached_df] + new_chunks if not cached_df.empty else new_chunks
+            merged = pd.concat(all_parts)
+            merged = merged[~merged.index.duplicated(keep='last')]
+            merged = merged.sort_index()
+
+            # Save updated master cache
+            if use_cache:
+                self._save_master_cache(merged, master_path)
+
+            full_df = merged
+        else:
+            full_df = cached_df
+
+        if full_df.empty:
+            return pd.DataFrame()
+
+        # Return only the requested date range
+        req_start = pd.Timestamp(start)
+        req_end = pd.Timestamp(end)
+        if req_start.tz is None and full_df.index.tz is not None:
+            req_start = req_start.tz_localize(full_df.index.tz)
+        if req_end.tz is None and full_df.index.tz is not None:
+            req_end = req_end.tz_localize(full_df.index.tz)
+
+        return full_df[(full_df.index >= req_start) & (full_df.index <= req_end)]
+
+    def _fetch_from_api(
+        self,
+        symbol: str,
+        timeframe: TimeFrame,
+        start: datetime,
+        end: datetime,
+    ) -> pd.DataFrame:
+        """Fetch bars from Alpaca API with pagination. Internal method."""
         all_bars = []
         current_start = start
 
@@ -180,13 +276,6 @@ class HistoricalDataClient:
         if col_map:
             df = df.rename(columns=col_map)
 
-        # Write to cache
-        if use_cache and not df.empty:
-            try:
-                df.to_parquet(cache_path)
-            except Exception as e:
-                print(f"  [HistoricalData] Cache write error: {e}")
-
         return df
 
     def fetch_bars_multi(
@@ -198,20 +287,46 @@ class HistoricalDataClient:
         use_cache: bool = True,
     ) -> Dict[str, pd.DataFrame]:
         """
-        Fetch bars for multiple symbols.
+        Fetch bars for multiple symbols using parallel threads.
 
         Returns:
             Dict mapping symbol -> DataFrame
         """
+        import concurrent.futures
+        
         result = {}
         total = len(symbols)
-        for i, symbol in enumerate(symbols, 1):
-            print(f"  Fetching {symbol} ({i}/{total})...")
-            df = self.fetch_bars(symbol, timeframe, start, end, use_cache=use_cache)
-            if not df.empty:
-                result[symbol] = df
-            else:
-                print(f"  [HistoricalData] No data for {symbol}")
+        print(f"  Fetching {total} symbols in parallel...")
+        
+        # Helper function for threading
+        def _fetch_single(sym):
+            return sym, self.fetch_bars(sym, timeframe, start, end, use_cache=use_cache)
+
+        # Use ThreadPoolExecutor for I/O bound tasks
+        # Limit max_workers to avoid hitting API rate limits too aggressively or file handles
+        # Alpaca rate limits are per minute, handled by the rate limiter token bucket inside fetch_bars.
+        # But we still want to limit concurrency to something reasonable.
+        # Limit max_workers to 5 to avoid triggering Alpaca's rate limits too aggressively.
+        # Even with the internal RateLimiter, high concurrency can lead to connection errors or burst failures.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all tasks
+            future_to_symbol = {executor.submit(_fetch_single, sym): sym for sym in symbols}
+            
+            # Process as they complete
+            completed_count = 0
+            for future in concurrent.futures.as_completed(future_to_symbol):
+                sym = future_to_symbol[future]
+                completed_count += 1
+                try:
+                    s, df = future.result()
+                    if not df.empty:
+                        result[s] = df
+                        print(f"  [{completed_count}/{total}] {s}: {len(df)} bars")
+                    else:
+                        print(f"  [{completed_count}/{total}] {s}: No data")
+                except Exception as e:
+                    print(f"  [{completed_count}/{total}] {s}: Error - {e}")
+
         return result
 
     def warm_indicators(

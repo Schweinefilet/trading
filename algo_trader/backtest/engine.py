@@ -130,16 +130,72 @@ class BacktestEngine:
         # Determine regime at each trading day
         regime_by_date = self._build_regime_map(spy_daily)
 
-        # Build QQQ trend map for risk-sizing filter (Phase 6A)
+        # Pre-compute QQQ trend map (Phase 6A)
         qqq_trend_bullish = {}
         if "QQQ" in bar_data and not bar_data["QQQ"].empty:
             qqq_df = bar_data["QQQ"]
-            qqq_ema_fast = qqq_df["close"].ewm(span=self.cfg.QQQ_EMA_FAST, adjust=False).mean()
-            qqq_ema_slow = qqq_df["close"].ewm(span=self.cfg.QQQ_EMA_SLOW, adjust=False).mean()
-            for ts_q, row_q in qqq_df.iterrows():
-                idx_q = qqq_df.index.get_loc(ts_q)
-                if idx_q >= self.cfg.QQQ_EMA_SLOW:
-                    qqq_trend_bullish[ts_q] = qqq_ema_fast.iloc[idx_q] > qqq_ema_slow.iloc[idx_q]
+            # Optimization: Pre-calculate EMA vectorized
+            ema_f = qqq_df["close"].ewm(span=self.cfg.QQQ_EMA_FAST, adjust=False).mean()
+            ema_s = qqq_df["close"].ewm(span=self.cfg.QQQ_EMA_SLOW, adjust=False).mean()
+            qqq_bool = ema_f > ema_s
+            for ts_q, is_bull in qqq_bool.items():
+                qqq_trend_bullish[ts_q] = is_bull
+
+        # Pre-compute SPY ATR map for Volatility Gating
+        spy_atr_map = {}
+        if "SPY" in bar_data and not bar_data["SPY"].empty:
+            spy_df = bar_data["SPY"]
+            # Optimization: Calculate rolling mean once
+            spy_atr_roll = spy_df["atr"].rolling(window=14).mean()
+            for ts_s, row_s in spy_df.iterrows():
+                spy_atr_map[ts_s] = {
+                    "atr": row_s.get("atr", 0),
+                    "atr_sma": spy_atr_roll.get(ts_s, row_s.get("atr", 0))
+                }
+            # Also need a daily version for signal RS ranking
+            self.spy_daily_rs = spy_daily.copy() if not spy_daily.empty else pd.DataFrame()
+
+        # Vectorized Pre-filtering: Identify signal candidates before the loop
+        # This is a LOOSE filter that must be a SUPERSET of actual signals.
+        # False positives OK (they just call generate_signals and get None).
+        # False negatives NOT OK (they would miss valid trades).
+        signal_candidates = {} # timestamp -> List[symbol]
+        print(f"  Optimizing: Pre-filtering signals for {len(bar_data)} symbols...")
+        
+        for sym, df in bar_data.items():
+            if sym in ("SPY", "QQQ"): continue
+            
+            # Loose pre-filter: check if ANY trend or mean-reversion conditions are plausible
+            # Use stored indicator columns (matching what generate_signals uses)
+            adx_ok = df["adx"] >= self.cfg.ADX_TREND_THRESHOLD
+            bias_ok = df["close"] > df["ema_bias"]
+            ema_ok = df["ema_fast"] > df["ema_slow"]
+            
+            # Use the pre-computed rsi_prev column (not shift)
+            rsi_prev_col = df["rsi_prev"] if "rsi_prev" in df.columns else df["rsi"].shift(1)
+            rsi_ok = ( (rsi_prev_col < self.cfg.RSI_MOMENTUM_LONG) & (df["rsi"] >= self.cfg.RSI_MOMENTUM_LONG) ) | \
+                     ( (rsi_prev_col <= 35) & (df["rsi"] > 35) )
+            vol_ok = df["volume"] >= self.cfg.VOLUME_MULTIPLIER * df["volume_sma_20"]
+            
+            confirms = adx_ok.astype(int) + bias_ok.astype(int) + ema_ok.astype(int) + rsi_ok.astype(int) + vol_ok.astype(int)
+            
+            # Mean Reversion Candidates (Phase 2)
+            rsi2 = df.get("rsi_2")
+            bb_lower = df.get("bb_lower")
+            mr_ok = pd.Series(False, index=df.index)
+            if rsi2 is not None and bb_lower is not None:
+                mr_ok = (rsi2 < 10) & (df["close"] < bb_lower)
+            
+            # LOOSE threshold: use 2 (lower than any actual threshold) to ensure no misses
+            # The actual generate_signals function applies the real threshold
+            min_confirms = max(1, min(self.cfg.CONFIRMATIONS_BULLISH, self.cfg.CONFIRMATIONS_BEARISH, self.cfg.CONFIRMATIONS_CAUTIOUS) - 1)
+            candidates = (confirms >= min_confirms) | mr_ok
+            
+            # Store candidates per timestamp
+            for ts_cand in df.index[candidates]:
+                if ts_cand not in signal_candidates:
+                    signal_candidates[ts_cand] = []
+                signal_candidates[ts_cand].append(sym)
 
         et = pytz.timezone("US/Eastern")
 
@@ -289,24 +345,28 @@ class BacktestEngine:
                 self.equity_curve.append(equity)
                 continue
 
-            # Generate signals for each symbol
+            # Generate signals for each symbol (ONLY for candidates)
             signals_this_bar = []
-            for sym in bar_data:
+            candidates = signal_candidates.get(ts, [])
+            
+            for sym in candidates:
                 if sym in positions:
                     continue  # Already have position
-                if sym in ("SPY", "QQQ"):
-                    continue  # Context tickers, never trade
 
                 df = bar_data[sym]
-                if ts not in df.index:
-                    continue
-
-                # Get data up to current bar (no look-ahead)
-                idx = df.index.get_loc(ts)
+                # Index check is redundant if using signal_candidates mapping correctly, but safe
+                
+                # Windowed Slicing: Only pass last N bars instead of entire history
+                # Optimization: No need for .get_loc repeat
+                idx = df.index.get_indexer([ts])[0]
                 if idx < 55:
-                    continue  # Not enough warm-up
+                    continue 
 
-                window = df.iloc[:idx + 1]
+                # SLICE WINDOW: Only pass what is needed for indicators (Phase 103)
+                # Typically 100 bars is enough for EMA/ADX/RSI if pre-computed
+                lookback = self.cfg.LOOKBACK_BARS
+                window = df.iloc[max(0, idx - lookback + 1) : idx + 1]
+                
                 signal = self._generate_signal(sym, window, regime, ts)
                 if signal:
                     signals_this_bar.append(signal)
@@ -328,10 +388,17 @@ class BacktestEngine:
                 else:
                     is_day_trade = day_trades_remaining > 0
 
-                # Immediate execution (Phase 105 proven logic)
+                # Immediate execution
                 entry_price = sig["entry_price"]
                 stop_price = sig["stop_price"]
-                shares = self._calculate_shares(equity, peak_equity, regime, sig, entry_price, stop_price)
+                
+                # Use pre-computed benchmark data
+                spy_data = spy_atr_map.get(ts, {"atr": 0, "atr_sma": 0})
+                
+                shares = self._calculate_shares(
+                    equity, peak_equity, regime, sig, entry_price, stop_price,
+                    spy_atr=spy_data["atr"], spy_atr_sma=spy_data["atr_sma"]
+                )
                 if shares > 0:
                     cost = shares * entry_price
                     if cost <= self.cash:
@@ -384,6 +451,51 @@ class BacktestEngine:
             "ending_capital": equity,
         }
 
+    def _update_leaderboard(self, date, bar_data_in: Dict[str, pd.DataFrame]):
+        """Calculate Relative Strength rankings for all symbols on a specific date."""
+        scores = {}
+        for sym, df in bar_data_in.items():
+            if sym in ["SPY", "QQQ"]: continue
+            
+            # Find the most recent bar on or before this date
+            day_data = df[df.index.date <= date]
+            if not day_data.empty:
+                val = day_data.iloc[-1].get("roc_125", np.nan)
+                if not pd.isna(val):
+                    scores[sym] = val
+        
+        if not scores:
+            self.leaderboard_cache[date] = {}
+            return
+            
+        # Rank symbols (higher ROC = better rank 1)
+        sorted_syms = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        num_syms = len(sorted_syms)
+        
+        self.leaderboard_cache[date] = {
+            sym: (i + 1) / num_syms for i, sym in enumerate(sorted_syms)
+        }
+        
+    def _calculate_shares(self, equity, peak_equity, regime, sig, entry_price, stop_price, spy_atr=0.0, spy_atr_sma=0.0):
+        """Use central position sizer for consistency."""
+        regime_mult = 1.0
+        if regime == "BEARISH": regime_mult = 0.5
+        elif regime == "CAUTIOUS": regime_mult = 0.75
+        
+        # Optimization: spy_atr and spy_atr_sma now passed in from pre-computed map
+        
+        return calculate_position_size(
+            equity=equity,
+            entry_price=entry_price,
+            stop_price=stop_price,
+            atr=sig.get("atr", 0),
+            regime_multiplier=regime_mult,
+            peak_equity=peak_equity,
+            spy_atr=spy_atr,
+            spy_atr_sma=spy_atr_sma
+        )
+
+
     def _generate_signal(self, symbol: str, df: pd.DataFrame, regime: str, ts) -> Optional[dict]:
         """Generate a signal using the central strategy logic."""
         # 1. Update leaderboard if needed for this date (Phase 108)
@@ -401,8 +513,11 @@ class BacktestEngine:
         spy_roc = 0
         stock_roc = curr.get("roc_20", 0)
         spy_ts = pd.Timestamp(ts.date())
-        if self.spy_daily is not None and not self.spy_daily.empty and spy_ts in self.spy_daily.index:
-            spy_roc = self.spy_daily.loc[spy_ts].get("roc_20", 0)
+        
+        # Optimization: Use cached self.spy_daily_rs
+        if hasattr(self, "spy_daily_rs") and not self.spy_daily_rs.empty and spy_ts in self.spy_daily_rs.index:
+            spy_roc = self.spy_daily_rs.loc[spy_ts].get("roc_20", 0)
+        
         rel_strength_intraday = stock_roc - spy_roc
 
         # 4. Call central signal generator
@@ -431,68 +546,6 @@ class BacktestEngine:
             }
         
         return None
-    def _update_leaderboard(self, date, bar_data_in: Dict[str, pd.DataFrame]):
-        """Calculate Relative Strength rankings for all symbols on a specific date."""
-        scores = {}
-        for sym, df in bar_data_in.items():
-            if sym in ["SPY", "QQQ"]: continue
-            
-            # Find the most recent bar on or before this date
-            day_data = df[df.index.date <= date]
-            if not day_data.empty:
-                val = day_data.iloc[-1].get("roc_125", np.nan)
-                if not pd.isna(val):
-                    scores[sym] = val
-        
-        if not scores:
-            self.leaderboard_cache[date] = {}
-            return
-            
-        # Rank symbols (higher ROC = better rank 1)
-        sorted_syms = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
-        num_syms = len(sorted_syms)
-        
-        self.leaderboard_cache[date] = {
-            sym: (i + 1) / num_syms for i, sym in enumerate(sorted_syms)
-        }
-
-
-
-    # _score is no longer needed as strategy.signals handles it
-
-
-    def _calculate_shares(self, equity, peak_equity, regime, sig, entry_price, stop_price):
-        """Use central position sizer for consistency."""
-        regime_mult = 1.0
-        if regime == "BEARISH": regime_mult = 0.5
-        elif regime == "CAUTIOUS": regime_mult = 0.75
-        
-        # SPY ATR for Volatility Gating
-        spy_atr = 0.0
-        spy_atr_sma = 0.0
-        spy_df = self.bar_data.get("SPY")
-        if spy_df is not None:
-             try:
-                 ts_idx = spy_df.index.get_indexer([sig["entry_time"] if "entry_time" in sig else pd.Timestamp.now()], method='pad')[0]
-                 if ts_idx >= 14:
-                     spy_atr = spy_df.iloc[ts_idx].get("atr", 0)
-                     spy_atr_sma = spy_df.iloc[ts_idx-14:ts_idx]["atr"].mean()
-             except Exception:
-                 pass
-
-        current_heat = 0 # Engine tracks this differently, but we can approximate or pass 0 for now as it's handled in the run loop mostly
-        # Actually, engine.py run loop currently doesn't track total portfolio heat yet, we should fix that in follow up.
-        
-        return calculate_position_size(
-            equity=equity,
-            entry_price=entry_price,
-            stop_price=stop_price,
-            atr=sig.get("atr", 0),
-            regime_multiplier=regime_mult,
-            peak_equity=peak_equity,
-            spy_atr=spy_atr,
-            spy_atr_sma=spy_atr_sma
-        )
 
 
     def _check_stops(self, pos: dict, bar, current_ts=None) -> Tuple[bool, float, str]:
@@ -545,13 +598,14 @@ class BacktestEngine:
                         if bar.get("close", 0) > pos["entry_price"]:
                             return True, bar.get("close", 0), "eod_profit_lock"
 
-                # 2. Refined Dead Money (48h + < 1.0x ATR profit)
+                # 2. Hard Time Stop (Strict max hold to avoid 2.5 year outliers)
                 hold_hours = (current_ts - pos["entry_time"]).total_seconds() / 3600
-                unrealized_pnl_atr = (bar.get("close", 0) - pos["entry_price"]) / pos["atr"] if pos["atr"] > 0 else 0
+                unrealized_pnl_atr = (bar.get("close", 0) - pos["entry_price"]) / pos["atr"] if pos.get("atr", 0) > 0 else 0
                 
                 max_hold = 48 if pos.get("strategy") == "mean_reversion" else self.cfg.MAX_HOLD_HOURS
-                if hold_hours >= max_hold and unrealized_pnl_atr < 1.0:
-                    return True, bar.get("close", pos["entry_price"]), "time_stop_dead_money"
+                if hold_hours >= max_hold:
+                    reason = "time_stop_dead_money" if unrealized_pnl_atr < 1.0 else "time_stop_hard_exit"
+                    return True, bar.get("close", pos["entry_price"]), reason
 
             # --- Phase 2: Mean Reversion Special Exits ---
             if pos.get("strategy") == "mean_reversion":
@@ -663,7 +717,7 @@ class BacktestEngine:
 
         if self.verbose:
              print(f"  {exit_time} | EXIT {pos['direction']} {shares} {symbol} @ ${actual_exit:.2f} | "
-                   f"Remaining=${remaining_pnl:.2f} | Partial=${partial_pnl:.2f} | Total PnL=${total_pnl:.2f} ({final_reason})")
+                   f"Proceeds=${proceeds:.2f} | Remaining PnL=${remaining_pnl:.2f} | Total PnL=${total_pnl:.2f} ({final_reason})")
 
         # Record day trade for PDT tracking
         if pos.get("is_day_trade", True):

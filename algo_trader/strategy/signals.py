@@ -203,17 +203,15 @@ def generate_signals(
     if (confirmations >= min_confirms and regime_allows_trade(regime_state, "LONG")):
         if not config.USE_VWAP or pd.isna(vwap) or close > vwap:
             if adx_rising:
-                # --- PHASE 108 GATE: TOP 20 HARD CAP ---
-                if rank_int is not None and rank_int > 20:
-                    return None # Not elite enough
+                # --- PHASE 108 GATE: TOP 10 ELITE HARD CAP (Iteration 13) ---
+                if rank_int is not None and rank_int > config.ELITE_SELECTION_TOP:
+                    return None # Elite Trend Leader only
                 
-                # --- TIERED TARGETS ---
-                target_mult = 10.0 # Default
+                # --- TIERED TARGETS  ---
+                target_mult = config.TARGET_MULT_RUNNERS # Runners (Top 10 but not Top 5)
                 if rank_int is not None:
-                    if rank_int <= 12:       # Elite Leaders
-                        target_mult = 25.0
-                    elif rank_int <= 20:     # Runners
-                        target_mult = 15.0
+                    if rank_int <= 5:        # Super Elite
+                        target_mult = config.TARGET_MULT_ELITE
                 
                 stop_mult = tickers.get_stop_multiplier(symbol, config.ATR_STOP_MULTIPLIER)
                 atr_expanding = (not pd.isna(atr_prev) and atr > atr_prev) or pd.isna(atr_prev)
@@ -224,13 +222,21 @@ def generate_signals(
                     atr_expanding=atr_expanding, rel_strength_intraday=rel_strength_intraday
                 )
 
+                risk_amount = atr * stop_mult
+                reward_amount = risk_amount * config.MIN_REWARD_RISK_RATIO
+                
+                # Cap by tiered target_mult for safety (optional survival logic)
+                tp_price = close + reward_amount
+                max_tp_price = close + atr * target_mult
+                final_tp = min(tp_price, max_tp_price)
+
                 return TradeSignal(
                     symbol=symbol,
                     direction=SignalDirection.LONG,
                     signal_strength=strength,
                     entry_price=close,
-                    stop_loss=close - atr * stop_mult,
-                    take_profit=close + atr * target_mult,
+                    stop_loss=close - risk_amount,
+                    take_profit=final_tp,
                     atr=atr,
                     timestamp=ts,
                     reason=f"Trend: Confirm={confirmations}, Rank={rank_int}, ADX={adx:.1f}",

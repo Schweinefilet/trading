@@ -20,6 +20,7 @@ from data.indicators import compute_indicators, compute_regime_indicators
 from backtest.engine import BacktestEngine
 from backtest.metrics import print_metrics
 from backtest.walk_forward import walk_forward_analysis, print_walk_forward_report
+from backtest.monthly_report import print_monthly_tsv
 
 
 def main():
@@ -39,6 +40,11 @@ def main():
         config.HOLD_OVERNIGHT = True
     if args.no_regime:
         config.USE_REGIME_FILTER = False
+    
+    # Sync config with CLI overrides so the printout below is accurate
+    config.BACKTEST_START = args.start
+    config.BACKTEST_END = args.end
+    config.STARTING_CAPITAL = args.capital
 
     start = datetime.strptime(args.start, "%Y-%m-%d")
     end = datetime.strptime(args.end, "%Y-%m-%d")
@@ -54,10 +60,18 @@ def main():
     
     # Print all parameters (User requirement)
     print("\n  CONFIGURATION SETTINGS:")
+    # Sensitive keys to redact from logs
+    _sensitive_keys = {
+        "ALPACA_API_KEY", "ALPACA_SECRET_KEY",
+        "DISCORD_WEBHOOK_URL", "EMAIL_PASS",
+    }
     # Filter out methods, constants, and built-ins to show only parameters
     for key, value in config.__dict__.items():
         if not key.startswith("_") and not callable(value):
-            print(f"    {key:<30}: {value}")
+            if key in _sensitive_keys:
+                print(f"    {key:<30}: ****")
+            else:
+                print(f"    {key:<30}: {value}")
     print(f"{'=' * 60}\n")
 
     # Fetch historical data
@@ -80,17 +94,25 @@ def main():
             print(f"  {sym}: {len(bar_data[sym])} bars, indicators computed")
     print()
 
-    # Fetch SPY daily for regime detection
-    print("Step 3: Fetching SPY daily data for regime filter...")
+    # Fetch SPY daily for regime detection + benchmark data
+    print("Step 3: Fetching benchmark daily data (SPY, DIA, QQQ)...")
     spy_start = start - __import__('datetime').timedelta(days=300)  # Need 200-day SMA warm-up
     spy_tf = parse_timeframe("1Day")
-    spy_daily = client.fetch_bars("SPY", spy_tf, spy_start, end)
+    
+    # Fetch all benchmarks in one batch
+    benchmark_daily = client.fetch_bars_multi(["SPY", "DIA", "QQQ"], spy_tf, spy_start, end)
+    spy_daily = benchmark_daily.get("SPY", __import__('pandas').DataFrame())
+    
     if not spy_daily.empty:
         spy_daily = compute_regime_indicators(spy_daily)
-        print(f"  SPY: {len(spy_daily)} daily bars with regime indicators.\n")
+        print(f"  SPY: {len(spy_daily)} daily bars with regime indicators.")
     else:
-        print("  WARNING: No SPY data. Regime filter will default to BULLISH.\n")
+        print("  WARNING: No SPY data. Regime filter will default to BULLISH.")
         spy_daily = __import__('pandas').DataFrame()
+    
+    dia_daily = benchmark_daily.get("DIA", __import__('pandas').DataFrame())
+    qqq_daily = benchmark_daily.get("QQQ", __import__('pandas').DataFrame())
+    print(f"  DIA: {len(dia_daily)} bars, QQQ: {len(qqq_daily)} bars\n")
 
     if args.walk_forward:
         # Walk-forward analysis
@@ -116,17 +138,24 @@ def main():
 
         print_metrics(results["metrics"])
 
-        # Print ALL trades
-        trades = results["trades"]
-        if trades and args.verbose:
-            print(f"\n  All Trades ({len(trades)}):")
-            print(f"  {'Date':<19s} {'Symbol':<6s} {'Dir':<6s} {'Entry$':>8s} {'Exit$':>8s} {'Shares':>6s} {'Amt$':>9s} {'PnL':>10s} {'Reason':<15s}")
-            print(f"  {'-' * 19} {'-' * 6} {'-' * 6} {'-' * 8} {'-' * 8} {'-' * 6} {'-' * 9} {'-' * 10} {'-' * 15}")
-            for t in trades:
-                sign = "+" if t.pnl >= 0 else ""
-                entry_amt = t.entry_price * t.shares
-                print(f"  {t.entry_time.strftime('%Y-%m-%d %H:%M'):<19s} {t.symbol:<6s} {t.direction:<6s} ${t.entry_price:>7.2f} ${t.exit_price:>7.2f} "
-                      f"{t.shares:>6d} ${entry_amt:>8.2f} {sign}${t.pnl:>9.2f} {t.exit_reason:<15s}")
+        # Monthly TSV report with benchmarks
+        print("\n" + "=" * 60)
+        print("  MONTHLY PERFORMANCE (TSV - copy into Google Sheets)")
+        print("=" * 60 + "\n")
+        
+        # Build benchmark bar_data dict for monthly_report
+        bench_data = {}
+        if not dia_daily.empty:
+            bench_data["DIA"] = dia_daily
+        if not qqq_daily.empty:
+            bench_data["QQQ"] = qqq_daily
+        
+        print_monthly_tsv(
+            trades=results["trades"],
+            starting_capital=args.capital,
+            spy_daily=spy_daily,
+            bar_data=bench_data,
+        )
 
     print("\nBacktest complete.")
 
