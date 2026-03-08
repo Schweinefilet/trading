@@ -183,7 +183,7 @@ class DataFetcher:
                 # Convert DatetimeIndex column to string
                 date_col = upgrades.columns[0]
                 upgrades[date_col] = upgrades[date_col].astype(str)
-                upgrades = upgrades.head(10)
+                upgrades = upgrades.head(50)
                 result['upgrades_downgrades'] = upgrades[['GradeDate', 'Firm', 'ToGrade', 'FromGrade', 'Action']].to_dict(orient='records')
             else:
                 result['upgrades_downgrades'] = []
