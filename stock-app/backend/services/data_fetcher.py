@@ -7,6 +7,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+ANALYST_TARGETS_VERSION = 2
+
+SYMBOL_OVERRIDES = {
+    '^GSPC': {'longName': 'S&P 500 Index', 'sector': 'Index', 'industry': 'Equity Index'},
+    '^IXIC': {'longName': 'NASDAQ Composite', 'sector': 'Index', 'industry': 'Equity Index'},
+    '^DJI': {'longName': 'Dow Jones Industrial Average', 'sector': 'Index', 'industry': 'Equity Index'},
+    '^RUT': {'longName': 'Russell 2000 Index', 'sector': 'Index', 'industry': 'Equity Index'},
+    '^VIX': {'longName': 'CBOE Volatility Index', 'sector': 'Index', 'industry': 'Volatility Index'},
+    '^TNX': {'longName': 'CBOE Interest Rate 10 Year T Note', 'sector': 'Rates', 'industry': 'Treasury Yield Index'},
+    'GC=F': {'longName': 'Gold Futures', 'sector': 'Commodities', 'industry': 'Precious Metals'},
+    'SI=F': {'longName': 'Silver Futures', 'sector': 'Commodities', 'industry': 'Precious Metals'},
+    'CL=F': {'longName': 'Crude Oil WTI Futures', 'sector': 'Commodities', 'industry': 'Energy'},
+    'DX=F': {'longName': 'U.S. Dollar Index Futures', 'sector': 'Currencies', 'industry': 'Dollar Index'},
+    'ES=F': {'longName': 'E-mini S&P 500 Futures', 'sector': 'Futures', 'industry': 'Equity Index Futures'},
+    'NQ=F': {'longName': 'E-mini Nasdaq-100 Futures', 'sector': 'Futures', 'industry': 'Equity Index Futures'},
+    'YM=F': {'longName': 'E-mini Dow Jones Futures', 'sector': 'Futures', 'industry': 'Equity Index Futures'},
+}
+
 class DataFetcher:
     def __init__(self):
         api_key = os.getenv("FINNHUB_API_KEY")
@@ -15,6 +33,11 @@ class DataFetcher:
     def get_quote(self, ticker):
         data = CacheService.get(ticker, 'quote')
         if data:
+            # Backfill metadata for older cached entries that may not include names/sectors.
+            needs_meta = not data.get('longName') or not data.get('sector')
+            if needs_meta:
+                data = self._enrich_quote_metadata(ticker, data)
+                CacheService.set(ticker, 'quote', data)
             return data
             
         res = None
@@ -33,6 +56,7 @@ class DataFetcher:
                         'prev_close': quote['pc'],
                         'timestamp': quote['t']
                     }
+                    res = self._enrich_quote_metadata(ticker, res)
                     CacheService.set(ticker, 'quote', res)
                     return res
             except Exception as e:
@@ -56,11 +80,37 @@ class DataFetcher:
                 'sector': info.get('sector'),
                 'industry': info.get('industry'),
             }
+            res = self._enrich_quote_metadata(ticker, res)
             CacheService.set(ticker, 'quote', res)
             return res
         except Exception as e:
             print(f"yfinance fallback error for {ticker}: {e}")
             return None
+
+    def _enrich_quote_metadata(self, ticker, quote):
+        res = dict(quote or {})
+
+        # Try fundamentals cache/API for company metadata if missing.
+        if not res.get('longName') or not res.get('sector') or not res.get('industry'):
+            try:
+                f = self.get_fundamentals(ticker)
+                if f:
+                    res['longName'] = res.get('longName') or f.get('longName') or ticker
+                    res['sector'] = res.get('sector') or f.get('sector')
+                    res['industry'] = res.get('industry') or f.get('industry')
+            except Exception:
+                pass
+
+        # Apply authoritative symbol-name overrides for indexes/futures.
+        override = SYMBOL_OVERRIDES.get(ticker)
+        if override:
+            res['longName'] = override.get('longName') or res.get('longName') or ticker
+            res['sector'] = override.get('sector') or res.get('sector')
+            res['industry'] = override.get('industry') or res.get('industry')
+        elif not res.get('longName'):
+            res['longName'] = ticker
+
+        return res
 
     def get_history(self, ticker, period='1y', interval='1d'):
         key_params = f"period={period}&interval={interval}"
@@ -138,9 +188,9 @@ class DataFetcher:
             print(f"Fundamentals error for {ticker}: {e}")
             return None
 
-    def get_analyst(self, ticker):
-        data = CacheService.get(ticker, 'analyst')
-        if data:
+    def get_analyst(self, ticker, force_refresh=False):
+        data = None if force_refresh else CacheService.get(ticker, 'analyst')
+        if data and data.get('targets_extraction_version') == ANALYST_TARGETS_VERSION:
             return data
 
         try:
@@ -182,25 +232,37 @@ class DataFetcher:
             upgrades = stock.upgrades_downgrades
             if upgrades is not None and not upgrades.empty:
                 upgrades = upgrades.reset_index()
-                # Convert DatetimeIndex column to string
                 date_col = upgrades.columns[0]
-                upgrades[date_col] = upgrades[date_col].astype(str)
 
-                # Extract latest individual price target per firm for KDE chart
-                if 'currentPriceTarget' in upgrades.columns:
-                    valid_pts = upgrades[
-                        upgrades['currentPriceTarget'].notna() &
-                        (upgrades['currentPriceTarget'] > 0)
-                    ]
-                    firm_latest = valid_pts.groupby('Firm', sort=False).first().reset_index()
+                # Normalize ordering: newest first so "most recent" logic is deterministic.
+                upgrades['_grade_ts'] = pd.to_datetime(upgrades[date_col], errors='coerce')
+                upgrades = upgrades.sort_values('_grade_ts', ascending=False, na_position='last').reset_index(drop=True)
+
+                # Keep only the same latest 50 actions we render in the table,
+                # then dedupe by firm so latest revision wins.
+                recent_50_actions = upgrades.head(50).copy()
+
+                result['individual_targets'] = []
+                if 'currentPriceTarget' in recent_50_actions.columns:
+                    target_rows = recent_50_actions[
+                        recent_50_actions['currentPriceTarget'].notna() &
+                        (recent_50_actions['currentPriceTarget'] > 0)
+                    ].copy()
+
+                    if 'Firm' in target_rows.columns:
+                        # latest revision wins, no duplicate firm targets
+                        latest_per_firm = target_rows.drop_duplicates(subset=['Firm'], keep='first')
+                    else:
+                        latest_per_firm = target_rows
+
                     result['individual_targets'] = [
-                        float(v) for v in firm_latest['currentPriceTarget'].tolist()
+                        float(v) for v in latest_per_firm['currentPriceTarget'].tolist()
                         if pd.notna(v) and v > 0
                     ]
-                else:
-                    result['individual_targets'] = []
 
-                upgrades = upgrades.head(50)
+                # Keep recent upgrades table payload for UI (last 50 actions overall)
+                upgrades = recent_50_actions
+                upgrades[date_col] = upgrades[date_col].astype(str)
                 # Include price target columns if available
                 base_cols = ['GradeDate', 'Firm', 'ToGrade', 'FromGrade', 'Action']
                 extra_cols = [c for c in ['priceTargetAction', 'currentPriceTarget', 'priorPriceTarget']
@@ -217,6 +279,8 @@ class DataFetcher:
             print(f"Analyst upgrades/downgrades error for {ticker}: {e}")
             result['upgrades_downgrades'] = []
             result['individual_targets'] = []
+
+        result['targets_extraction_version'] = ANALYST_TARGETS_VERSION
 
         if result:
             CacheService.set(ticker, 'analyst', result)

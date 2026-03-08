@@ -24,6 +24,7 @@ class CacheService:
             
         ttls = {
             'quote': timedelta(minutes=15),
+            'analyst': timedelta(minutes=15),
             'fundamentals': timedelta(hours=24),
             'financials': timedelta(days=7),
             'history': timedelta(hours=1),

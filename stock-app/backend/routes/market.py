@@ -99,7 +99,8 @@ def get_financials(ticker):
 
 @market_bp.route('/stock/<ticker>/analyst')
 def get_analyst(ticker):
-    data = fetcher.get_analyst(ticker)
+    refresh = str(request.args.get('refresh', '')).lower() in {'1', 'true', 'yes'}
+    data = fetcher.get_analyst(ticker, force_refresh=refresh)
     if not data:
         return jsonify({'error': 'Analyst data not found'}), 404
     return jsonify(data)

@@ -52,6 +52,19 @@ const EditableRow = ({ holding, onDelete, onUpdate }) => {
                 >
                     {holding.ticker}
                 </Link>
+                <div className="mt-0.5">
+                    <p className="text-[11px] truncate" style={{ color: 'var(--text-tertiary)', maxWidth: '220px' }}>
+                        {holding.long_name || holding.ticker}
+                    </p>
+                    {holding.sector && (
+                        <span
+                            className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}
+                        >
+                            {holding.sector}
+                        </span>
+                    )}
+                </div>
             </td>
             <td className="py-4 px-3 text-right">
                 {editing ? (
