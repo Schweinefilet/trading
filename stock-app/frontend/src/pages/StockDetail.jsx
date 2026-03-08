@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
     Search, TrendingUp, BarChart2, Activity, Clock, Layers,
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import StockChart from '../components/StockChart';
 import IndicatorModal from '../components/IndicatorModal';
+import StatsPanel from '../components/StatsPanel';
 import { computeHeikinAshi } from '../utils/heikinAshi';
 
 const TIMEFRAMES = [
@@ -16,11 +17,28 @@ const TIMEFRAMES = [
     { label: '15m', value: '15m' },
     { label: '30m', value: '30m' },
     { label: '1H', value: '1h' },
-    { label: '4H', value: '4h' },
     { label: '1D', value: '1d' },
     { label: '1W', value: '1wk' },
     { label: '1M', value: '1mo' },
 ];
+
+const PERIODS = [
+    { label: '1M', value: '1mo' },
+    { label: '3M', value: '3mo' },
+    { label: '6M', value: '6mo' },
+    { label: '1Y', value: '1y' },
+    { label: '2Y', value: '2y' },
+    { label: '5Y', value: '5y' },
+];
+
+// Max periods yfinance supports per interval
+const INTERVAL_MAX_PERIOD = {
+    '1m':  '5d',
+    '5m':  '1mo',
+    '15m': '1mo',
+    '30m': '1mo',
+    '1h':  '3mo',
+};
 
 class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -55,17 +73,58 @@ class ErrorBoundary extends React.Component {
 
 const StockDetail = () => {
     const { ticker } = useParams();
+    const navigate = useNavigate();
+    const [searchInput, setSearchInput] = useState('');
     const [data, setData] = useState([]);
     const [indicatorData, setIndicatorData] = useState([]);
     const [quote, setQuote] = useState(null);
-    const [period, setPeriod] = useState('1y');
+    const [period, setPeriod] = useState('5y');
     const [interval, setInterval] = useState('1d');
+
+    const handleIntervalChange = (newInterval) => {
+        setInterval(newInterval);
+        if (INTERVAL_MAX_PERIOD[newInterval]) {
+            // Intraday: clamp to its max period
+            setPeriod(INTERVAL_MAX_PERIOD[newInterval]);
+        } else {
+            // Switching back to daily/weekly/monthly: restore default
+            setPeriod('5y');
+        }
+    };
     const [chartType, setChartType] = useState('candlestick');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [showIndicatorModal, setShowIndicatorModal] = useState(false);
     const [showChartTypeDropdown, setShowChartTypeDropdown] = useState(false);
+    const chartTypeDropdownRef = useRef(null);
     const [activeIndicators, setActiveIndicators] = useState(['rsi', 'macd', 'sma_20', 'sma_50']);
+    const [hoveredBar, setHoveredBar] = useState(null);
+    const [showStatsPanel, setShowStatsPanel] = useState(false);
+
+    // Reset hovered bar on ticker change
+    useEffect(() => { setHoveredBar(null); }, [ticker]);
+
+    // Close chart-type dropdown on outside click
+    useEffect(() => {
+        if (!showChartTypeDropdown) return;
+        const handler = (e) => {
+            if (chartTypeDropdownRef.current && !chartTypeDropdownRef.current.contains(e.target)) {
+                setShowChartTypeDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showChartTypeDropdown]);
+
+    // Remove an oscillator pane by its pane id
+    const handleRemovePane = useCallback((paneId) => {
+        setActiveIndicators(prev => prev.filter(id => id !== paneId && id.split('_')[0] !== paneId));
+    }, []);
+
+    // Remove a main-pane overlay (SMA, EMA, VWAP, bbands…) by its indicator id
+    const handleRemoveOverlay = useCallback((indicatorId) => {
+        setActiveIndicators(prev => prev.filter(id => id !== indicatorId));
+    }, []);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -100,27 +159,32 @@ const StockDetail = () => {
     return (
         <div className="flex flex-col h-screen bg-[#131722] text-[#d1d4dc] overflow-hidden">
             <header className="h-12 border-b border-[#2a2e39] flex items-center px-4 gap-4 flex-shrink-0">
-                <div className="flex items-center gap-2 pr-4 border-r border-[#2a2e39]">
+                {/* Logo — clickable home navigation */}
+                <button
+                    onClick={() => navigate('/')}
+                    className="flex items-center gap-2 pr-4 border-r border-[#2a2e39] hover:opacity-80 transition-opacity"
+                >
                     <TrendingUp className="text-blue-500 w-5 h-5" />
                     <span className="font-bold text-white tracking-widest text-sm">TV_CLONE</span>
-                </div>
+                </button>
 
-                <div className="relative flex-grow max-w-xs">
+                <form onSubmit={(e) => { e.preventDefault(); const t = searchInput.trim().toUpperCase(); if (t) { navigate(`/stock/${t}`); setSearchInput(''); } }} className="relative min-w-[160px] flex-grow max-w-xs">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                     <input
                         type="text"
-                        placeholder="Search symbol..."
-                        className="w-full bg-[#1e222d] border border-transparent focus:border-[#2962ff] rounded px-9 py-1 text-sm outline-none"
-                        value={ticker}
-                        readOnly
+                        placeholder={ticker}
+                        className="w-full bg-[#1e222d] border border-transparent focus:border-[#2962ff] rounded pl-9 pr-3 py-1 text-sm outline-none uppercase"
+                        style={{ color: '#d1d4dc' }}
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
                     />
-                </div>
+                </form>
 
                 <div className="flex bg-[#1e222d] p-0.5 rounded border border-[#2a2e39] ml-2">
                     {TIMEFRAMES.map(tf => (
                         <button
                             key={tf.label}
-                            onClick={() => setInterval(tf.value)}
+                            onClick={() => handleIntervalChange(tf.value)}
                             className={`px-3 py-1 text-[11px] font-bold rounded transition-colors ${interval === tf.value ? 'bg-[#2962ff] text-white' : 'hover:bg-[#2a2e39] text-[#d1d4dc]'}`}
                         >
                             {tf.label}
@@ -128,7 +192,21 @@ const StockDetail = () => {
                     ))}
                 </div>
 
-                <div className="relative ml-2">
+                {!INTERVAL_MAX_PERIOD[interval] && (
+                    <div className="flex bg-[#1e222d] p-0.5 rounded border border-[#2a2e39]">
+                        {PERIODS.map(p => (
+                            <button
+                                key={p.label}
+                                onClick={() => setPeriod(p.value)}
+                                className={`px-2.5 py-1 text-[11px] font-bold rounded transition-colors ${period === p.value ? 'bg-[#2962ff] text-white' : 'hover:bg-[#2a2e39] text-[#d1d4dc]'}`}
+                            >
+                                {p.label}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                <div className="relative ml-2" ref={chartTypeDropdownRef}>
                     <button
                         onClick={() => setShowChartTypeDropdown(!showChartTypeDropdown)}
                         className="flex items-center gap-1 px-3 py-1.5 bg-[#1e222d] hover:bg-[#2a2e39] border border-[#2a2e39] rounded text-[11px] font-bold transition-colors"
@@ -170,6 +248,19 @@ const StockDetail = () => {
                     Indicators
                 </button>
 
+                {/* Stats toggle button */}
+                <button
+                    onClick={() => setShowStatsPanel(prev => !prev)}
+                    className={`ml-2 flex items-center gap-1.5 px-3 py-1.5 border rounded text-[11px] font-bold transition-colors ${
+                        showStatsPanel
+                            ? 'bg-[#2962ff] border-[#2962ff] text-white'
+                            : 'bg-[#1e222d] hover:bg-[#2a2e39] border-[#2a2e39] text-[#d1d4dc]'
+                    }`}
+                >
+                    <BarChart2 className="w-3.5 h-3.5" />
+                    Stats
+                </button>
+
                 <div className="flex items-center gap-2 ml-auto">
                     <button className="p-2 hover:bg-[#2a2e39] rounded text-slate-400"><Maximize2 className="w-5 h-5" /></button>
                     <button className="p-2 hover:bg-[#2a2e39] rounded text-slate-400"><Settings className="w-5 h-5" /></button>
@@ -202,18 +293,26 @@ const StockDetail = () => {
                                 indicatorData={indicatorData}
                                 activeIndicators={activeIndicators}
                                 chartType={chartType === 'heikin_ashi' ? 'candlestick' : chartType}
+                                onCrosshairMove={setHoveredBar}
+                                onRemovePane={handleRemovePane}
+                                onRemoveOverlay={handleRemoveOverlay}
                             />
                         </ErrorBoundary>
                     )}
                 </main>
 
+                {showStatsPanel && (
+                    <div className="w-[360px] flex-shrink-0 border-l border-[#2a2e39] overflow-y-auto">
+                        <StatsPanel ticker={ticker} onClose={() => setShowStatsPanel(false)} />
+                    </div>
+                )}
+
                 {showIndicatorModal && (
                     <IndicatorModal
                         onClose={() => setShowIndicatorModal(false)}
-                        onSelect={(indicator) => {
-                            if (!activeIndicators.includes(indicator)) {
-                                setActiveIndicators([...activeIndicators, indicator]);
-                            }
+                        onSelect={(result) => {
+                            const toAdd = (Array.isArray(result) ? result : [result]).filter(id => !activeIndicators.includes(id));
+                            if (toAdd.length > 0) setActiveIndicators(prev => [...prev, ...toAdd]);
                             setShowIndicatorModal(false);
                         }}
                     />
@@ -222,10 +321,19 @@ const StockDetail = () => {
 
             <footer className="h-8 border-t border-[#2a2e39] bg-[#131722] flex items-center px-4 gap-6 text-[10px] font-medium text-slate-400 flex-shrink-0">
                 <div className="flex gap-4">
-                    <span>O <span className="text-white">{data[data.length - 1]?.Open?.toFixed(2) || '0.00'}</span></span>
-                    <span>H <span className="text-white">{data[data.length - 1]?.High?.toFixed(2) || '0.00'}</span></span>
-                    <span>L <span className="text-white">{data[data.length - 1]?.Low?.toFixed(2) || '0.00'}</span></span>
-                    <span>C <span className="text-white">{data[data.length - 1]?.Close?.toFixed(2) || '0.00'}</span></span>
+                    {(() => {
+                        const bar = hoveredBar || data[data.length - 1];
+                        const o = (hoveredBar?.open ?? bar?.Open)?.toFixed(2) || '0.00';
+                        const h = (hoveredBar?.high ?? bar?.High)?.toFixed(2) || '0.00';
+                        const l = (hoveredBar?.low  ?? bar?.Low)?.toFixed(2)  || '0.00';
+                        const c = (hoveredBar?.close ?? bar?.Close)?.toFixed(2) || '0.00';
+                        return (<>
+                            <span>O <span className="text-white">{o}</span></span>
+                            <span>H <span className="text-white">{h}</span></span>
+                            <span>L <span className="text-white">{l}</span></span>
+                            <span>C <span className="text-white">{c}</span></span>
+                        </>);
+                    })()}
                 </div>
             </footer>
         </div>
