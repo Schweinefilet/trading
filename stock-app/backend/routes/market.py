@@ -96,3 +96,10 @@ def get_financials(ticker):
     if not data:
         return jsonify({'error': 'Financials not found'}), 404
     return jsonify(data)
+
+@market_bp.route('/stock/<ticker>/analyst')
+def get_analyst(ticker):
+    data = fetcher.get_analyst(ticker)
+    if not data:
+        return jsonify({'error': 'Analyst data not found'}), 404
+    return jsonify(data)
