@@ -24,14 +24,14 @@ class TradingConfig:
     ALPACA_SECRET_KEY: str = field(default_factory=lambda: os.getenv("ALPACA_SECRET_KEY", ""))
     BASE_URL_PAPER: str = "https://paper-api.alpaca.markets"
     BASE_URL_LIVE: str = "https://api.alpaca.markets"
-    DATA_FEED: str = "iex"  # "iex" (free) or "sip" ($99/mo, required for live)
+    DATA_FEED: str = "sip"  # "iex" (free) or "sip" ($99/mo, required for live)
     MAX_API_CALLS_PER_MIN: int = 200
     WEBSOCKET_PING_INTERVAL: int = 10
     WEBSOCKET_PING_TIMEOUT: int = 180
     WEBSOCKET_RECONNECT_DELAY: int = 5  # seconds, doubles on each retry up to 60s
 
     # === TIMEFRAMES ===
-    PRIMARY_TIMEFRAME: str = "15Min"       # Signal generation
+    PRIMARY_TIMEFRAME: str = "1Hour"       # Signal generation (Audit Mode)
     ENTRY_TIMEFRAME: str = "5Min"          # Entry timing refinement
     BIAS_TIMEFRAME: str = "1Hour"          # Directional bias
     ATR_PERIOD: int = 14
@@ -42,19 +42,21 @@ class TradingConfig:
     HOLD_OVERNIGHT: bool = False           # If True, ignore EOD close and hold positions
     USE_REGIME_FILTER: bool = True         # If True, block trades based on SPY trend
     # RSI (primary oscillator)
-    RSI_PERIOD: int = 14                   # Smoother signal
+    RSI_PERIOD: int = 20                   # Iteration 31: Max Smoothing
     RSI_OVERBOUGHT: float = 70.0
     RSI_OVERSOLD: float = 30.0
-    RSI_MOMENTUM_LONG: float = 50.0        # RSI rising above this = momentum confirmation
+    RSI_MOMENTUM_LONG: float = 50.0        # Reverted from 60.0
     RSI_MOMENTUM_SHORT: float = 45.0       # RSI falling below this = bearish momentum
 
     # ADX (trend strength filter)
-    ADX_PERIOD: int = 14
-    ADX_TREND_THRESHOLD: float = 10.0      # Lower threshold to catch more trends
+    ADX_PERIOD: int = 10                   # Iteration 19 Base (High Return)
+    ADX_TREND_THRESHOLD: float = 35.0      # Reverted to Best-of-Phase-3
+
+
 
     # EMAs (trend direction)
-    EMA_FAST: int = 9
-    EMA_SLOW: int = 21
+    EMA_FAST: int = 13
+    EMA_SLOW: int = 34
     EMA_BIAS: int = 50                     # On 15-min: ~12.5 hours of data
 
     # VWAP
@@ -64,31 +66,81 @@ class TradingConfig:
     VOLUME_MULTIPLIER: float = 1.2         # Signal requires volume >= 1.2x 20-bar average
 
     # === EXIT RULES ===
-    MIN_REWARD_RISK_RATIO: float = 1.5     # Lowered to accommodate wider stops
-    ATR_STOP_MULTIPLIER: float = 3.5       # Stop loss = entry ± (ATR × 3.5)
-    ATR_TARGET_MULTIPLIER: float = 6.0     # Take profit = entry ± (ATR × 6.0)
+    MIN_REWARD_RISK_RATIO: float = 0.9     # Iteration 24: High-Probability Target
+    ATR_STOP_MULTIPLIER: float = 3.2       # Iteration 22: More Breathing Room
+    ATR_TARGET_MULTIPLIER: float = 25.0    # Phase 108 Optimized (Leaders) (Legacy)
+    ELITE_SELECTION_TOP: int = 10           # Limits "Elite Selection" to top N ranked tickers
+    TARGET_MULT_ELITE: float = 25.0         # Target ATR multiple for Top 5 Elite
+    TARGET_MULT_RUNNERS: float = 15.0       # Target ATR multiple for Rank 6-10 Runners
     
     # Trailing Stop Rules
-    TRAILING_STOP_ACTIVATE_ATR: float = 2.0
-    TRAILING_STOP_ATR: float = 1.5
+    TRAILING_STOP_ACTIVATE_ATR: float = 1.8    # Iteration 25: Earlier Activation
+    TRAILING_STOP_ATR: float = 1.2            # Iteration 25: Tighter Lock
     
-    # Break-Even Guardrail (Phase 6 - DISCONTINUED)
-    BREAK_EVEN_ACTIVATE_ATR: float = 999.0  # High to disable
-    BREAK_EVEN_OFFSET_ATR: float = 0.0
-    BREAK_EVEN_MIN_HOLD_MINS: int = 999
+    # Break-Even Guardrail (Phase 6A)
+    BREAK_EVEN_ACTIVATE_ATR: float = 0.8    # Iteration 14: Earlier BE move
+    BREAK_EVEN_OFFSET_ATR: float = 0.1      # Iteration 14: Tighter offset
+    BREAK_EVEN_MIN_HOLD_MINS: int = 30      # Only after 30 min hold time
     
-    # QQQ Directional Risk (Phase 6 - DISCONTINUED)
-    QQQ_RISK_REDUCTION_BEARISH: float = 1.0 # 1.0 = No reduction
+    # QQQ Directional Risk (Phase 6A)
+    QQQ_RISK_REDUCTION_BEARISH: float = 0.5 # Reduce position size by 50% when QQQ bearish
+    QQQ_EMA_FAST: int = 9                   # QQQ fast EMA for trend detection
+    QQQ_EMA_SLOW: int = 21                  # QQQ slow EMA for trend detection
     
     TIME_STOP_MINUTES_BEFORE_CLOSE: int = 15
+    
+    # === PARTIAL EXITS (Phase 105) ===
+    USE_PARTIAL_EXITS: bool = True
+    PARTIAL_EXIT_PCT_BULLISH: float = 0.10  
+    PARTIAL_EXIT_PCT_DEFAULT: float = 0.20  
+    PARTIAL_EXIT_ATR_TRIGGER: float = 3.5   # Phase 105: 3.5x ATR trigger
 
+
+
+
+    
+    # Adaptive Confirmations (Phase 7: 3/3/3 out of 5 - Core Only)
+    CONFIRMATIONS_BULLISH: int = 4
+    CONFIRMATIONS_CAUTIOUS: int = 4
+    CONFIRMATIONS_BEARISH: int = 3
+
+
+    
+    # === ENTRY TIME FILTERING === # Entry filtering
+    ENTRY_BLACKOUT_OPEN_MINS: int = 5
+    ENTRY_BLACKOUT_CLOSE_MINS: int = 5
+    ENTRY_SKIPPED_DAYS: List[int] = field(default_factory=lambda: [1])  # Skip Tuesdays (Phase 2 analysis)
+
+    # Phase 3 Sharpening
+    MAX_HOLD_HOURS: int = 48            # Reverted for Trend Following
+    MAX_SECTOR_POSITIONS: int = 2       # Max correlated trades per sector
+    
     # === RISK MANAGEMENT ===
-    RISK_PER_TRADE_PCT: float = 0.01       # 1% of equity risked per trade
-    MAX_POSITION_PCT: float = 0.25         # Max 25% of equity in single position
-    MAX_PORTFOLIO_HEAT_PCT: float = 0.06   # Max 6% total portfolio risk
-    MAX_POSITIONS: int = 4
+    RISK_PER_TRADE_BEARISH: float = 0.025  
+    
+    # === PHASE 112: RISK SCALING & VOL GATING ===
+    USE_DYNAMIC_RISK_SCALING: bool = True
+    RISK_SCALING_STEPS: Dict[float, float] = field(default_factory=lambda: {
+        0.0: 0.067,      # < $100k: 6.7%
+        100_000.0: 0.040, # $100k - $250k: 4.0%
+        250_000.0: 0.025  # > $250k: 2.5%
+    })
+    VOLATILITY_GATE_ATR_MULT: float = 1.5   # Cut size if SPY ATR > 1.5x Avg
+    
+    RISK_PER_TRADE_PCT: float = 0.067      # Fallback
+    MAX_POSITION_PCT: float = 0.60         
+    MAX_PORTFOLIO_HEAT_PCT: float = 0.90   
+    MAX_POSITIONS: int = 15                
+    
+    USE_COMPLEX_RISK_MULTIPLIERS: bool = False 
+
+
     MAX_SAME_SECTOR: int = 2
     MAX_CAPITAL_DEPLOYED_PCT: float = 0.70 # Keep 30% cash buffer
+    
+    # Position Sizing Toggle (Phase 6B)
+    USE_RISK_BASED_SIZING: bool = True      # Enabled for compounding growth (essential for >300% return)
+    FIXED_POSITION_DOLLAR: float = 3000.0  # Normalized dollar amount per trade
 
     # === DRAWDOWN / CIRCUIT BREAKERS ===
     DAILY_LOSS_LIMIT_PCT: float = 0.03     # 3% daily loss → halt trading
@@ -96,7 +148,7 @@ class TradingConfig:
     MONTHLY_LOSS_LIMIT_PCT: float = 0.06
     MAX_CONSECUTIVE_LOSSES: int = 3
     DRAWDOWN_REDUCE_SIZE_PCT: float = 0.10 # At 10% drawdown, reduce to 50% size
-    DRAWDOWN_HALT_PCT: float = 0.15        # At 15% drawdown, halt all trading
+    DRAWDOWN_HALT_PCT: float = 0.25        # Relaxed for Phase 2 Analysis
     DRAWDOWN_PAPER_ONLY_PCT: float = 0.20  # At 20% drawdown, return to paper
 
     # === PDT COMPLIANCE ===
@@ -120,24 +172,37 @@ class TradingConfig:
     SPREAD_COST_PER_SHARE: float = 0.02    # $0.02 average spread
     MIN_POSITION_VAL: float = 0.0          # REVERTED: Allow all sizes
     
-    # Regulatory Fees (Sell-side only) - REVERTED
-    SEC_FEE_RATE: float = 0.0
-    FINRA_TAF_RATE: float = 0.0
-    FINRA_TAF_CAP: float = 0.0
+    # Regulatory Fees (Sell-side only)
+    SEC_FEE_RATE: float = 0.0000278        # SEC Section 31 fee
+    FINRA_TAF_RATE: float = 0.000166       # FINRA Trading Activity Fee
+    FINRA_TAF_CAP: float = 8.30            # Cap per trade
     WALK_FORWARD_IN_SAMPLE_DAYS: int = 90
     WALK_FORWARD_OUT_SAMPLE_DAYS: int = 30
     WALK_FORWARD_STEP_DAYS: int = 30
 
-    # === MONITORING ===
+    # === MONITORING & ALERTS ===
+    HEARTBEAT_INTERVAL_SEC: int = 60
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "logs/trading_{date}.log"
+    
+    # Alert Channels
     ALERT_ON_TRADE: bool = True
     ALERT_ON_CIRCUIT_BREAKER: bool = True
     ALERT_ON_ERROR: bool = True
-    HEARTBEAT_INTERVAL_SEC: int = 60
+    
+    # Discord
+    DISCORD_WEBHOOK_URL: str = field(default_factory=lambda: os.getenv("DISCORD_WEBHOOK_URL", ""))
+    
+    # Email (Optional)
+    EMAIL_ENABLE: bool = False
+    EMAIL_SMTP_HOST: str = field(default_factory=lambda: os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com"))
+    EMAIL_SMTP_PORT: int = 587
+    EMAIL_USER: str = field(default_factory=lambda: os.getenv("EMAIL_USER", ""))
+    EMAIL_PASS: str = field(default_factory=lambda: os.getenv("EMAIL_PASS", ""))
+    EMAIL_TO: str = field(default_factory=lambda: os.getenv("EMAIL_TO", ""))
 
     # === NOTIFICATIONS ===
-    DISCORD_WEBHOOK_URL: str = field(default_factory=lambda: os.getenv("DISCORD_WEBHOOK_URL", ""))
+    # (Discord moved to Monitoring section)
 
     # === PATHS ===
     BASE_DIR: Path = field(default_factory=lambda: Path(__file__).parent.parent)

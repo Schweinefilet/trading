@@ -100,6 +100,9 @@ def compute_metrics(trades: list, starting_capital: float, ending_capital: float
     # Monthly returns
     monthly = _monthly_returns(trades)
 
+    # Exit reason breakdown
+    partial_exits = sum(1 for t in trades if "+partial" in t.exit_reason)
+
     return {
         "total_return": total_return,
         "total_return_pct": total_return_pct,
@@ -118,6 +121,7 @@ def compute_metrics(trades: list, starting_capital: float, ending_capital: float
         "avg_holding_period_hours": avg_holding,
         "day_trades": day_trades,
         "swing_trades": swing_trades,
+        "partial_exits": partial_exits,
         "gross_profit": gross_profit,
         "gross_loss": gross_loss,
         "monthly_returns": monthly,
@@ -222,6 +226,7 @@ def print_metrics(metrics: dict, title: str = "BACKTEST RESULTS"):
     print(f"  {'-' * 56}")
     print(f"  Day Trades:           {metrics.get('day_trades', 0)}")
     print(f"  Swing Trades:         {metrics.get('swing_trades', 0)}")
+    print(f"  Partial Exits:        {metrics.get('partial_exits', 0)}")
     print(f"  Avg Holding:          {metrics.get('avg_holding_period_hours', 0):.1f} hours")
     print(f"{'=' * 60}")
 
