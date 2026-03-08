@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/keith/trading/stock-app/backend && source venv/bin/activate 2>/dev/null || true && flask run --port 5001"],
+      "port": 5001
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/keith/trading/stock-app/frontend && npm run dev"],
+      "port": 5173
+    }
+  ]
+}

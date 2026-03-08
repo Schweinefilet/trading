@@ -548,9 +548,6 @@ const Dashboard = () => {
                             </div>
                         </div>
                     </div>
-                    <div className="absolute top-0 right-0 p-8 -rotate-12 select-none pointer-events-none" style={{ color: 'rgba(255,255,255,0.05)' }}>
-                        <TrendingUp size={160} />
-                    </div>
                 </div>
 
                 {/* CTA card */}
