@@ -1,19 +1,147 @@
+/* ── iOS 26 Liquid Glass Design System ─────────────────────── */
+:root {
+  --glass-fill:        rgba(255, 255, 255, 0.10);
+  --glass-fill-hover:  rgba(255, 255, 255, 0.20);
+  --glass-border:      rgba(255, 255, 255, 0.30);
+  --glass-blur:        blur(4px) saturate(180%);
+  --glass-shadow:      0 8px 32px rgba(0, 0, 0, 0.25);
+  --glass-specular:    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --radius-card:       20px;
+  --radius-btn:        50px;
+  --accent:            #ffffff;
+  --positive:          #30D158;
+  --negative:          #FF453A;
+  --warning:           #FFD60A;
+  --text-primary:      #ffffff;
+  --text-secondary:    rgba(255, 255, 255, 0.70);
+  --text-tertiary:     rgba(255, 255, 255, 0.40);
+}
+
+* {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+               'SF Pro Text', 'Helvetica Neue', sans-serif;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #000000 !important;
+  margin: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  width: 700px;
+  height: 700px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.04) 0%, transparent 70%);
+  filter: blur(100px);
+  top: -150px;
+  left: -150px;
+  z-index: 0;
+  pointer-events: none;
+  animation: blobA 20s ease-in-out infinite alternate;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  width: 600px;
+  height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.03) 0%, transparent 70%);
+  filter: blur(100px);
+  bottom: -100px;
+  right: -100px;
+  z-index: 0;
+  pointer-events: none;
+  animation: blobB 24s ease-in-out infinite alternate;
+}
+
+@keyframes blobA {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(50px, 40px) scale(1.1); }
+}
+@keyframes blobB {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(-40px, -30px) scale(1.08); }
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+.glass {
+  background:          var(--glass-fill) !important;
+  backdrop-filter:     var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+  border:              1px solid var(--glass-border) !important;
+  box-shadow:          var(--glass-shadow), var(--glass-specular) !important;
+  border-radius:       var(--radius-card) !important;
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.glass:hover {
+  background:     var(--glass-fill-hover) !important;
+  border-color:   rgba(255, 255, 255, 0.20) !important;
+}
+
+.glass-pill {
+  background:          rgba(255, 255, 255, 0.04);
+  backdrop-filter:     blur(18px) saturate(170%);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  border:              1px solid rgba(255, 255, 255, 0.11);
+  border-radius:       14px;
+  padding:             4px;
+  display:             inline-flex;
+  gap:                 2px;
+}
+
+/* Scoped glass input — applied via className on controlled inputs only */
+.glass-input {
+  background:          rgba(255, 255, 255, 0.04) !important;
+  border:              1px solid rgba(255, 255, 255, 0.11) !important;
+  border-radius:       12px !important;
+  color:               white !important;
+  padding:             10px 14px !important;
+  backdrop-filter:     blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  outline:             none;
+  transition:          border-color 0.2s ease, box-shadow 0.2s ease;
+  width:               100%;
+  color-scheme:        light; /* prevent Chrome dark-mode UA from injecting dark-blue bg */
+}
+.glass-input:focus {
+  border-color:        var(--accent) !important;
+  box-shadow:          0 0 0 3px rgba(255, 255, 255, 0.10) !important;
+}
+.glass-input::placeholder {
+  color:               var(--text-tertiary);
+}
+
+h1 { font-size: 2.5rem;  font-weight: 700; letter-spacing: -0.04em; color: #fff; }
+h2 { font-size: 1.5rem;  font-weight: 600; letter-spacing: -0.03em; color: #fff; }
+h3 { font-size: 1.1rem;  font-weight: 600; color: rgba(255,255,255,0.9); }
+
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.28); }
+
+/* ── Legacy utilities (kept for compatibility) ──────────────── */
 @import "tailwindcss";
 
 @theme {
-  --color-background: #0f172a;
-  --color-card: #1e293b;
-  --color-border: #334155;
+  --color-background: #000000;
+  --color-card:       #1e293b;
+  --color-border:     #334155;
 }
 
 :root {
   color-scheme: dark;
-}
-
-body {
-  @apply bg-background text-slate-100;
-  margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 .card {
@@ -21,7 +149,7 @@ body {
 }
 
 .btn-primary {
-  @apply bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors;
+  @apply bg-white hover:bg-white/90 text-black font-medium py-2 px-4 rounded-lg transition-colors;
 }
 
 .text-positive {

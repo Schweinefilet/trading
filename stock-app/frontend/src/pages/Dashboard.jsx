@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { TrendingUp, TrendingDown, Clock, Plus, X, Check, ChevronDown, List } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import ParticlesBg from '../components/ParticlesBg';
 
 // ── Market strip tickers ──────────────────────────────────────────────────────
 const MARKET_TICKERS = [
@@ -100,40 +101,115 @@ const getMACDCross = (indData) => {
 };
 
 // ── Market Strip ──────────────────────────────────────────────────────────────
-const MarketItem = ({ ticker, label }) => {
-    const [quote, setQuote] = useState(null);
-    useEffect(() => {
-        axios.get(`/api/stock/${encodeURIComponent(ticker)}/quote`)
-            .then(r => setQuote(r.data))
-            .catch(() => {});
-    }, [ticker]);
+const SCROLL_SPEED = 0.45; // px per animation frame
+
+// Pure display cell — receives pre-fetched quote as prop
+const MarketCell = ({ label, quote }) => {
     const isPos = (quote?.change ?? 0) >= 0;
     return (
-        <div className="flex items-center gap-3 px-4 py-2 border-r border-slate-700/50 flex-shrink-0">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">{label}</span>
+        <div className="flex items-center gap-3 px-4 py-2 border-r border-white/10 flex-shrink-0">
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>{label}</span>
             {quote ? (
                 <>
-                    <span className="text-sm font-bold text-white tabular-nums">
+                    <span className="text-sm font-bold tabular-nums" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
                         {quote.current_price?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
-                    <span className={`text-[11px] font-bold tabular-nums ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    <span className="text-[11px] font-bold tabular-nums" style={{ color: isPos ? 'var(--positive)' : 'var(--negative)' }}>
                         {isPos ? '+' : ''}{quote.percent_change?.toFixed(2)}%
                     </span>
                 </>
             ) : (
-                <span className="text-xs text-slate-600 animate-pulse">···</span>
+                <span className="text-xs animate-pulse" style={{ color: 'var(--text-tertiary)' }}>···</span>
             )}
         </div>
     );
 };
 
-const MarketStrip = () => (
-    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-x-auto flex scrollbar-none">
-        {MARKET_TICKERS.map(m => (
-            <MarketItem key={m.ticker} ticker={m.ticker} label={m.label} />
-        ))}
-    </div>
-);
+const MarketStrip = () => {
+    const [quotes, setQuotes] = useState({});
+    const trackRef = useRef(null);
+    const containerRef = useRef(null);
+    const offsetRef = useRef(0);
+    const isDragging = useRef(false);
+    const dragStartX = useRef(0);
+    const dragStartOffset = useRef(0);
+    const rafRef = useRef(null);
+
+    // Fetch quotes once — only 10 calls instead of doubling with duplicate components
+    useEffect(() => {
+        MARKET_TICKERS.forEach(({ ticker }) => {
+            axios.get(`/api/stock/${encodeURIComponent(ticker)}/quote`)
+                .then(r => setQuotes(prev => ({ ...prev, [ticker]: r.data })))
+                .catch(() => {});
+        });
+    }, []);
+
+    // Wrap offset so it stays in [-singleWidth, 0)
+    const normalize = useCallback((val) => {
+        const track = trackRef.current;
+        if (!track) return val;
+        const w = track.scrollWidth / 2;
+        if (w <= 0) return val;
+        val = val % w;
+        if (val > 0) val -= w;
+        return val;
+    }, []);
+
+    // Animation loop — runs continuously, pauses while user is dragging
+    useEffect(() => {
+        const tick = () => {
+            if (!isDragging.current && trackRef.current) {
+                offsetRef.current = normalize(offsetRef.current - SCROLL_SPEED);
+                trackRef.current.style.transform = `translateX(${offsetRef.current}px)`;
+            }
+            rafRef.current = requestAnimationFrame(tick);
+        };
+        rafRef.current = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(rafRef.current);
+    }, [normalize]);
+
+    const handlePointerDown = useCallback((e) => {
+        isDragging.current = true;
+        dragStartX.current = e.clientX;
+        dragStartOffset.current = offsetRef.current;
+        e.currentTarget.style.cursor = 'grabbing';
+        e.currentTarget.setPointerCapture(e.pointerId);
+    }, []);
+
+    const handlePointerMove = useCallback((e) => {
+        if (!isDragging.current) return;
+        const delta = e.clientX - dragStartX.current;
+        const newOffset = normalize(dragStartOffset.current + delta);
+        offsetRef.current = newOffset;
+        if (trackRef.current) trackRef.current.style.transform = `translateX(${newOffset}px)`;
+    }, [normalize]);
+
+    const handlePointerUp = useCallback((e) => {
+        isDragging.current = false;
+        if (e.currentTarget) e.currentTarget.style.cursor = 'grab';
+    }, []);
+
+    return (
+        <div
+            ref={containerRef}
+            className="glass overflow-hidden select-none"
+            style={{ padding: '4px 0', cursor: 'grab' }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+        >
+            {/* Two copies side-by-side for seamless infinite loop */}
+            <div ref={trackRef} className="flex" style={{ willChange: 'transform' }}>
+                {[0, 1].flatMap(copy =>
+                    MARKET_TICKERS.map(m => (
+                        <MarketCell key={`${m.ticker}-${copy}`} label={m.label} quote={quotes[m.ticker]} />
+                    ))
+                )}
+            </div>
+        </div>
+    );
+};
 
 // ── Watchlist Card ────────────────────────────────────────────────────────────
 const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
@@ -149,7 +225,7 @@ const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
             .finally(() => setLoading(false));
     }, [ticker, quoteProp]);
 
-    if (loading) return <div className="card animate-pulse h-28" />;
+    if (loading) return <div className="glass animate-pulse h-28" />;
     if (!quote) return null;
 
     const isPositive = (quote.change ?? 0) >= 0;
@@ -158,10 +234,11 @@ const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
     const sector = quote.sector || null;
 
     return (
-        <div className="card hover:border-slate-500 transition-colors flex flex-col justify-between group relative">
+        <div className="glass flex flex-col justify-between group relative" style={{ padding: '18px', borderRadius: '16px' }}>
             <button
                 onClick={(e) => { e.preventDefault(); onRemove(ticker); }}
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-600 hover:text-rose-400 transition-all z-10"
+                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-all z-10"
+                style={{ color: 'var(--text-tertiary)' }}
                 title="Remove"
             >
                 <X className="h-3.5 w-3.5" />
@@ -169,21 +246,27 @@ const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
             <Link to={`/stock/${ticker}`} className="flex flex-col justify-between h-full">
                 <div className="flex justify-between items-start">
                     <div className="min-w-0 flex-1 pr-2">
-                        <h3 className="font-bold text-lg text-white group-hover:text-blue-400 transition-colors uppercase">{ticker}</h3>
-                        <p className="text-xs text-slate-500 truncate">{quote.longName}</p>
+                        <h3 className="font-bold text-lg uppercase" style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>{ticker}</h3>
+                        <p className="text-xs truncate" style={{ color: 'var(--text-tertiary)' }}>{quote.longName}</p>
                         {sector && (
-                            <span className="inline-block mt-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-400 truncate max-w-full">
+                            <span className="inline-block mt-1 text-[10px] font-medium px-1.5 py-0.5 rounded truncate max-w-full" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}>
                                 {sector}
                             </span>
                         )}
                     </div>
-                    <div className={`px-2 py-1 rounded text-xs font-bold flex-shrink-0 ${isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                    <div
+                        className="px-2 py-1 rounded text-xs font-bold flex-shrink-0"
+                        style={isPositive
+                            ? { background: 'rgba(48,209,88,0.18)', color: 'var(--positive)', border: '1px solid rgba(48,209,88,0.3)', borderRadius: '8px', padding: '2px 8px', fontSize: '0.75rem', fontWeight: 600 }
+                            : { background: 'rgba(255,69,58,0.18)', color: 'var(--negative)', border: '1px solid rgba(255,69,58,0.3)', borderRadius: '8px', padding: '2px 8px', fontSize: '0.75rem', fontWeight: 600 }
+                        }
+                    >
                         {isPositive ? '+' : ''}{quote.percent_change?.toFixed(2)}%
                     </div>
                 </div>
                 <div className="mt-3 flex justify-between items-end">
-                    <span className="text-2xl font-bold">${quote.current_price?.toFixed(2)}</span>
-                    <div className={`flex items-center ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    <span className="text-2xl font-bold" style={{ color: '#fff', fontWeight: 700, fontSize: '1.35rem' }}>${quote.current_price?.toFixed(2)}</span>
+                    <div className="flex items-center" style={{ color: isPositive ? 'var(--positive)' : 'var(--negative)' }}>
                         {isPositive ? <TrendingUp className="h-4 w-4 mr-1" /> : <TrendingDown className="h-4 w-4 mr-1" />}
                         <span className="text-sm font-medium">{quote.change?.toFixed(2)}</span>
                     </div>
@@ -191,19 +274,23 @@ const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
                 {/* RSI + MACD badges */}
                 <div className="mt-2 flex gap-1.5 flex-wrap">
                     {rsi != null && (
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded tabular-nums ${
-                            rsi < 30 ? 'bg-emerald-500/20 text-emerald-400' :
-                            rsi > 70 ? 'bg-rose-500/20 text-rose-400' :
-                            'bg-slate-700 text-slate-400'
-                        }`}>
+                        <span
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded tabular-nums"
+                            style={rsi < 30
+                                ? { background: 'rgba(48,209,88,0.15)', color: 'var(--positive)', borderRadius: '6px', padding: '2px 6px', fontSize: '0.7rem' }
+                                : rsi > 70
+                                    ? { background: 'rgba(255,69,58,0.15)', color: 'var(--negative)', borderRadius: '6px', padding: '2px 6px', fontSize: '0.7rem' }
+                                    : { background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)', borderRadius: '6px', padding: '2px 6px', fontSize: '0.7rem' }
+                            }
+                        >
                             RSI {rsi.toFixed(1)}
                         </span>
                     )}
                     {macdCross === 1 && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">MACD ↑</span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(48,209,88,0.15)', color: 'var(--positive)', borderRadius: '6px', padding: '2px 6px', fontSize: '0.7rem' }}>MACD ↑</span>
                     )}
                     {macdCross === -1 && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400">MACD ↓</span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,69,58,0.15)', color: 'var(--negative)', borderRadius: '6px', padding: '2px 6px', fontSize: '0.7rem' }}>MACD ↓</span>
                     )}
                 </div>
             </Link>
@@ -219,20 +306,23 @@ const SortDropdown = ({ value, onChange }) => {
         <div className="relative">
             <button
                 onClick={() => setOpen(o => !o)}
-                className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+                className="flex items-center gap-1.5 text-sm transition-colors"
+                style={{ color: 'var(--text-secondary)' }}
             >
-                Sort: <span className="text-slate-200 font-medium">{selected?.label}</span>
+                Sort: <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{selected?.label}</span>
                 <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
             </button>
             {open && (
-                <div className="absolute right-0 top-full mt-1 w-44 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-20 py-1 overflow-hidden">
+                <div className="glass absolute right-0 top-full mt-1 w-44 z-20 py-1 overflow-hidden">
                     {SORT_OPTIONS.map(opt => (
                         <button
                             key={opt.value}
                             onClick={() => { onChange(opt.value); setOpen(false); }}
-                            className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-                                opt.value === value ? 'text-blue-400 bg-blue-500/10' : 'text-slate-300 hover:bg-slate-700'
-                            }`}
+                            className="w-full text-left px-4 py-2 text-sm transition-colors"
+                            style={opt.value === value
+                                ? { color: '#fff', background: 'rgba(255,255,255,0.12)' }
+                                : { color: 'var(--text-secondary)' }
+                            }
                         >
                             {opt.label}
                         </button>
@@ -260,47 +350,48 @@ const WatchlistModal = ({ title, watchlist, onClose, onSave }) => {
     const remove = (t) => setItems(prev => prev.filter(i => i !== t));
 
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
+            <div className="glass p-6 w-full max-w-sm" style={{ padding: '24px' }}>
                 <div className="flex justify-between items-center mb-5">
                     <h3 className="text-lg font-bold">Customize — {title}</h3>
-                    <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X className="h-5 w-5" /></button>
+                    <button onClick={onClose} style={{ color: 'var(--text-tertiary)' }}><X className="h-5 w-5" /></button>
                 </div>
                 <div className="flex gap-2 mb-4">
                     <input
                         type="text"
                         placeholder="Add ticker (e.g. AAPL)"
-                        className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 uppercase text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        style={{ color: 'white' }}
+                        className="glass-input uppercase text-sm flex-1"
+                        style={{ padding: '8px 12px', color: 'white' }}
                         value={input}
                         onChange={e => { setInput(e.target.value.toUpperCase()); setError(''); }}
                         onKeyDown={e => e.key === 'Enter' && add()}
                     />
-                    <button onClick={add} className="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white transition-colors">
+                    <button onClick={add} className="px-3 py-2 rounded-xl text-black transition-colors" style={{ background: 'var(--accent)', borderRadius: '12px' }}>
                         <Plus className="h-4 w-4" />
                     </button>
                 </div>
-                {error && <p className="text-rose-400 text-xs mb-3">{error}</p>}
+                {error && <p className="text-sm mb-3" style={{ color: 'var(--negative)' }}>{error}</p>}
                 <div className="space-y-1 max-h-64 overflow-y-auto mb-5">
                     {items.map(t => (
-                        <div key={t} className="flex items-center justify-between px-3 py-2 bg-slate-700/50 rounded-lg">
+                        <div key={t} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.07)' }}>
                             <span className="font-bold text-sm text-white">{t}</span>
-                            <button onClick={() => remove(t)} className="text-slate-500 hover:text-rose-400 transition-colors">
+                            <button onClick={() => remove(t)} style={{ color: 'var(--text-tertiary)' }} className="hover:text-rose-400 transition-colors">
                                 <X className="h-4 w-4" />
                             </button>
                         </div>
                     ))}
                     {items.length === 0 && (
-                        <p className="text-slate-500 text-sm text-center py-4">No tickers yet</p>
+                        <p className="text-sm text-center py-4" style={{ color: 'var(--text-tertiary)' }}>No tickers yet</p>
                     )}
                 </div>
                 <div className="flex gap-3">
-                    <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm transition-colors">
+                    <button onClick={onClose} className="flex-1 py-2 rounded-xl text-white text-sm transition-colors" style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 'var(--radius-btn)' }}>
                         Cancel
                     </button>
                     <button
                         onClick={() => { onSave(items); onClose(); }}
-                        className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2"
+                        className="flex-1 py-2 text-black text-sm font-bold transition-colors flex items-center justify-center gap-2"
+                        style={{ background: 'var(--accent)', borderRadius: 'var(--radius-btn)' }}
                     >
                         <Check className="h-4 w-4" /> Save
                     </button>
@@ -419,16 +510,19 @@ const Dashboard = () => {
     }, [watchlist, sortBy, quotesMap, indicatorsMap]);
 
     return (
-        <div className="space-y-8">
+        <>
+        <ParticlesBg canvasId="particles-dashboard" />
+        <div className="relative space-y-8" style={{ zIndex: 1 }}>
             {/* Market Strip */}
             <MarketStrip />
 
             {/* Portfolio + CTA */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="card md:col-span-2 bg-gradient-to-br from-blue-600/20 to-slate-800 border-blue-500/30 overflow-hidden relative">
+                {/* Portfolio Overview card */}
+                <div className="glass md:col-span-2 overflow-hidden relative" style={{ padding: '24px' }}>
                     <div className="relative z-10">
-                        <h2 className="text-slate-400 font-medium flex items-center">
-                            <Clock className="h-4 w-4 mr-2" />
+                        <h2 className="font-medium flex items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                            <Clock className="h-4 w-4 mr-2" style={{ color: 'var(--accent)' }} />
                             Portfolio Overview
                         </h2>
                         <div className="mt-4 flex flex-col sm:flex-row sm:items-end sm:space-x-8">
@@ -436,32 +530,47 @@ const Dashboard = () => {
                                 <p className="text-3xl sm:text-4xl font-black text-white">
                                     ${portfolio?.summary.total_value?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                                 </p>
-                                <p className="text-sm text-slate-400 mt-1 uppercase tracking-wider">Total Value</p>
+                                <p className="text-sm mt-1 uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Total Value</p>
                             </div>
                             <div className="mt-4 sm:mt-0">
-                                <p className={`text-xl font-bold ${portfolio?.summary.total_gain_loss >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                <p className="text-xl font-bold" style={{ color: portfolio?.summary.total_gain_loss >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
                                     {portfolio?.summary.total_gain_loss >= 0 ? '+' : ''}
                                     ${portfolio?.summary.total_gain_loss?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                                 </p>
-                                <p className="text-sm text-slate-400 mt-1 uppercase tracking-wider">Total G/L</p>
+                                <p className="text-sm mt-1 uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Total G/L</p>
                             </div>
                             <div className="mt-4 sm:mt-0">
-                                <p className={`text-xl font-bold ${portfolio?.summary.total_gain_loss_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                <p className="text-xl font-bold" style={{ color: portfolio?.summary.total_gain_loss_pct >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
                                     {portfolio?.summary.total_gain_loss_pct >= 0 ? '+' : ''}
                                     {portfolio?.summary.total_gain_loss_pct?.toFixed(2) || '0.00'}%
                                 </p>
-                                <p className="text-sm text-slate-400 mt-1 uppercase tracking-wider">Percentage</p>
+                                <p className="text-sm mt-1 uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Percentage</p>
                             </div>
                         </div>
                     </div>
-                    <div className="absolute top-0 right-0 p-8 text-blue-500/10 -rotate-12 select-none pointer-events-none">
+                    <div className="absolute top-0 right-0 p-8 -rotate-12 select-none pointer-events-none" style={{ color: 'rgba(255,255,255,0.05)' }}>
                         <TrendingUp size={160} />
                     </div>
                 </div>
 
-                <div className="card flex flex-col justify-center items-center text-center p-8 border-dashed border-2 border-slate-700">
-                    <p className="text-slate-400 mb-4">Start managing and tracking your investments today.</p>
-                    <Link to="/portfolio" className="btn-primary w-full">View My Portfolio</Link>
+                {/* CTA card */}
+                <div className="glass flex flex-col justify-center items-center text-center" style={{ padding: '32px' }}>
+                    <p className="mb-6" style={{ color: 'var(--text-secondary)' }}>Start managing and tracking your investments today.</p>
+                    <Link
+                        to="/portfolio"
+                        className="w-full text-center font-semibold transition-all"
+                        style={{
+                            background: 'var(--accent)',
+                            borderRadius: 'var(--radius-btn)',
+                            color: '#000',
+                            border: 'none',
+                            padding: '12px 28px',
+                            fontWeight: 600,
+                            display: 'block',
+                        }}
+                    >
+                        View My Portfolio
+                    </Link>
                 </div>
             </div>
 
@@ -470,22 +579,26 @@ const Dashboard = () => {
                 {/* Section header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                     {/* Tab pills */}
-                    <div className="flex items-center gap-1 bg-slate-800/70 border border-slate-700/60 rounded-xl p-1">
+                    <div className="glass-pill">
                         {WATCHLIST_TABS.map(tab => (
                             <button
                                 key={tab.id}
                                 onClick={() => { setActiveTab(tab.id); setSortBy('default'); }}
-                                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-                                    activeTab === tab.id
-                                        ? 'bg-blue-600 text-white shadow'
-                                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
-                                }`}
+                                className="flex items-center gap-1.5 rounded-[10px] text-sm transition-all"
+                                style={activeTab === tab.id
+                                    ? { background: 'rgba(255,255,255,0.15)', borderRadius: '10px', color: '#fff', padding: '6px 14px', fontWeight: 600 }
+                                    : { color: 'rgba(255,255,255,0.55)', background: 'transparent', padding: '6px 14px' }
+                                }
                             >
                                 <List className="h-3.5 w-3.5" />
                                 {tab.label}
-                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                                    activeTab === tab.id ? 'bg-white/20 text-white' : 'bg-slate-700 text-slate-400'
-                                }`}>
+                                <span
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                                    style={activeTab === tab.id
+                                        ? { background: 'rgba(255,255,255,0.20)', color: '#fff' }
+                                        : { background: 'rgba(255,255,255,0.08)', color: 'var(--text-tertiary)' }
+                                    }
+                                >
                                     {(watchlists[tab.id] ?? []).length}
                                 </span>
                             </button>
@@ -497,7 +610,8 @@ const Dashboard = () => {
                         <SortDropdown value={sortBy} onChange={setSortBy} />
                         <button
                             onClick={() => setShowCustomize(true)}
-                            className="text-sm text-blue-400 font-medium hover:underline"
+                            className="text-sm font-medium hover:underline transition-colors"
+                            style={{ color: 'var(--text-secondary)' }}
                         >
                             Customize
                         </button>
@@ -518,7 +632,8 @@ const Dashboard = () => {
                     {watchlist.length === 0 && (
                         <button
                             onClick={() => setShowCustomize(true)}
-                            className="col-span-full flex items-center justify-center gap-2 py-12 border-2 border-dashed border-slate-700 rounded-xl text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-colors"
+                            className="col-span-full flex items-center justify-center gap-2 py-12 rounded-xl transition-colors"
+                            style={{ border: '1.5px dashed rgba(255,255,255,0.20)', color: 'var(--text-tertiary)' }}
                         >
                             <Plus className="h-5 w-5" /> Add stocks to {activeTabConfig?.label}
                         </button>
@@ -535,6 +650,7 @@ const Dashboard = () => {
                 />
             )}
         </div>
+        </>
     );
 };
 
