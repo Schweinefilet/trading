@@ -58,17 +58,19 @@ const WATCHLIST_TABS = [
 
 // ── Sort options ──────────────────────────────────────────────────────────────
 const SORT_OPTIONS = [
-    { value: 'default',     label: 'Default' },
     { value: 'pct_desc',    label: '% Change ↑' },
     { value: 'pct_asc',     label: '% Change ↓' },
     { value: 'price_desc',  label: 'Price ↑' },
     { value: 'price_asc',   label: 'Price ↓' },
     { value: 'change_desc', label: 'Change $ ↑' },
     { value: 'change_asc',  label: 'Change $ ↓' },
+    { value: 'sector_asc',  label: 'Sector A→Z' },
+    { value: 'sector_desc', label: 'Sector Z→A' },
     { value: 'rsi_low',     label: 'RSI Oversold' },
     { value: 'rsi_high',    label: 'RSI Overbought' },
     { value: 'macd_bull',   label: 'MACD Bullish X' },
     { value: 'macd_bear',   label: 'MACD Bearish X' },
+    { value: 'default',     label: 'Default Order' },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -153,6 +155,7 @@ const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
     const isPositive = (quote.change ?? 0) >= 0;
     const rsi = getRSI(indData);
     const macdCross = getMACDCross(indData);
+    const sector = quote.sector || null;
 
     return (
         <div className="card hover:border-slate-500 transition-colors flex flex-col justify-between group relative">
@@ -165,11 +168,16 @@ const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
             </button>
             <Link to={`/stock/${ticker}`} className="flex flex-col justify-between h-full">
                 <div className="flex justify-between items-start">
-                    <div>
+                    <div className="min-w-0 flex-1 pr-2">
                         <h3 className="font-bold text-lg text-white group-hover:text-blue-400 transition-colors uppercase">{ticker}</h3>
-                        <p className="text-xs text-slate-500 truncate max-w-[120px]">{quote.longName}</p>
+                        <p className="text-xs text-slate-500 truncate">{quote.longName}</p>
+                        {sector && (
+                            <span className="inline-block mt-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-400 truncate max-w-full">
+                                {sector}
+                            </span>
+                        )}
                     </div>
-                    <div className={`px-2 py-1 rounded text-xs font-bold ${isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                    <div className={`px-2 py-1 rounded text-xs font-bold flex-shrink-0 ${isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
                         {isPositive ? '+' : ''}{quote.percent_change?.toFixed(2)}%
                     </div>
                 </div>
@@ -322,7 +330,7 @@ const Dashboard = () => {
 
     const [activeTab, setActiveTab] = useState('main');
     const [showCustomize, setShowCustomize] = useState(false);
-    const [sortBy, setSortBy] = useState('default');
+    const [sortBy, setSortBy] = useState('pct_desc');
     const [quotesMap, setQuotesMap] = useState({});
     const [indicatorsMap, setIndicatorsMap] = useState({});
 
@@ -392,6 +400,16 @@ const Dashboard = () => {
                     const ra = getRSI(ia) ?? -Infinity;
                     const rb = getRSI(ib) ?? -Infinity;
                     return rb - ra;
+                }
+                case 'sector_asc': {
+                    const sa = (quotesMap[a]?.sector || 'zzz').toLowerCase();
+                    const sb = (quotesMap[b]?.sector || 'zzz').toLowerCase();
+                    return sa < sb ? -1 : sa > sb ? 1 : 0;
+                }
+                case 'sector_desc': {
+                    const sa = (quotesMap[a]?.sector || '').toLowerCase();
+                    const sb = (quotesMap[b]?.sector || '').toLowerCase();
+                    return sa > sb ? -1 : sa < sb ? 1 : 0;
                 }
                 case 'macd_bull': return getMACDCross(ib) - getMACDCross(ia);
                 case 'macd_bear': return getMACDCross(ia) - getMACDCross(ib);
