@@ -52,7 +52,9 @@ class DataFetcher:
                 'open': info.get('regularMarketOpen'),
                 'prev_close': info.get('previousClose'),
                 'timestamp': info.get('regularMarketTime'),
-                'longName': info.get('longName', ticker)
+                'longName': info.get('longName', ticker),
+                'sector': info.get('sector'),
+                'industry': info.get('industry'),
             }
             CacheService.set(ticker, 'quote', res)
             return res
