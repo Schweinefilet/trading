@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import { X } from 'lucide-react';
 
 const PortfolioManager = ({ ticker, onAdded }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -29,46 +30,73 @@ const PortfolioManager = ({ ticker, onAdded }) => {
         <>
             <button
                 onClick={() => setIsOpen(true)}
-                className="btn-primary"
+                className="font-medium px-4 py-2 transition-colors"
+                style={{ background: 'var(--accent)', color: '#000', borderRadius: 'var(--radius-btn)' }}
             >
                 Add to Portfolio
             </button>
 
             {isOpen && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="card w-full max-w-sm">
-                        <h3 className="text-xl font-bold mb-4">Add {ticker} to Portfolio</h3>
+                <div
+                    className="fixed inset-0 flex items-center justify-center z-50 p-4"
+                    style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+                >
+                    <div className="glass w-full max-w-sm p-6" style={{ borderRadius: '20px' }}>
+                        <div className="flex items-center justify-between mb-5">
+                            <h3 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+                                Add {ticker} to Portfolio
+                            </h3>
+                            <button
+                                onClick={() => setIsOpen(false)}
+                                className="transition-colors"
+                                style={{ color: 'var(--text-tertiary)' }}
+                                onMouseEnter={e => e.currentTarget.style.color = 'var(--text-primary)'}
+                                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-tertiary)'}
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-sm text-slate-400 mb-1">Shares</label>
+                                <label className="block text-xs mb-1 uppercase font-bold" style={{ color: 'var(--text-secondary)' }}>
+                                    Shares
+                                </label>
                                 <input
                                     type="number"
-                                    className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white"
+                                    className="glass-input"
                                     value={shares}
                                     onChange={(e) => setShares(e.target.value)}
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm text-slate-400 mb-1">Avg Cost Basis</label>
+                                <label className="block text-xs mb-1 uppercase font-bold" style={{ color: 'var(--text-secondary)' }}>
+                                    Avg Cost Basis
+                                </label>
                                 <input
                                     type="number"
-                                    className="w-full bg-slate-700 border border-slate-600 rounded p-2 text-white"
+                                    className="glass-input"
                                     value={cost}
                                     onChange={(e) => setCost(e.target.value)}
                                 />
                             </div>
-                            <div className="flex space-x-3 pt-4">
+                            <div className="flex space-x-3 pt-2">
                                 <button
                                     disabled={loading}
                                     onClick={() => setIsOpen(false)}
-                                    className="flex-1 py-2 rounded bg-slate-700 hover:bg-slate-600 text-white transition-colors"
+                                    className="flex-1 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50"
+                                    style={{
+                                        background: 'rgba(255,69,58,0.12)',
+                                        color: 'var(--negative)',
+                                        border: '1px solid rgba(255,69,58,0.25)',
+                                    }}
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     disabled={loading}
                                     onClick={handleAdd}
-                                    className="flex-1 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                                    className="flex-1 py-2.5 font-bold transition-colors disabled:opacity-50"
+                                    style={{ background: 'var(--accent)', color: '#000', borderRadius: 'var(--radius-btn)' }}
                                 >
                                     {loading ? 'Adding...' : 'Add Position'}
                                 </button>

@@ -185,13 +185,38 @@ class DataFetcher:
                 # Convert DatetimeIndex column to string
                 date_col = upgrades.columns[0]
                 upgrades[date_col] = upgrades[date_col].astype(str)
+
+                # Extract latest individual price target per firm for KDE chart
+                if 'currentPriceTarget' in upgrades.columns:
+                    valid_pts = upgrades[
+                        upgrades['currentPriceTarget'].notna() &
+                        (upgrades['currentPriceTarget'] > 0)
+                    ]
+                    firm_latest = valid_pts.groupby('Firm', sort=False).first().reset_index()
+                    result['individual_targets'] = [
+                        float(v) for v in firm_latest['currentPriceTarget'].tolist()
+                        if pd.notna(v) and v > 0
+                    ]
+                else:
+                    result['individual_targets'] = []
+
                 upgrades = upgrades.head(50)
-                result['upgrades_downgrades'] = upgrades[['GradeDate', 'Firm', 'ToGrade', 'FromGrade', 'Action']].to_dict(orient='records')
+                # Include price target columns if available
+                base_cols = ['GradeDate', 'Firm', 'ToGrade', 'FromGrade', 'Action']
+                extra_cols = [c for c in ['priceTargetAction', 'currentPriceTarget', 'priorPriceTarget']
+                              if c in upgrades.columns]
+                # Replace NaN with None for safe JSON serialization
+                subset = upgrades[base_cols + extra_cols].where(
+                    upgrades[base_cols + extra_cols].notna(), other=None
+                )
+                result['upgrades_downgrades'] = subset.to_dict(orient='records')
             else:
                 result['upgrades_downgrades'] = []
+                result['individual_targets'] = []
         except Exception as e:
             print(f"Analyst upgrades/downgrades error for {ticker}: {e}")
             result['upgrades_downgrades'] = []
+            result['individual_targets'] = []
 
         if result:
             CacheService.set(ticker, 'analyst', result)
