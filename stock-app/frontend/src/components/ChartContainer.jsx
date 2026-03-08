@@ -10,11 +10,15 @@ const CHART_OPTIONS = {
         fontSize: 11
     },
     grid: {
-        vertLines: { color: 'rgba(255,255,255,0.06)' },
-        horzLines: { color: 'rgba(255,255,255,0.06)' }
+        vertLines: { color: 'rgba(255,255,255,0.22)' },
+        horzLines: { color: 'rgba(255,255,255,0.22)' }
     },
     crosshair: { mode: CrosshairMode.Normal },
-    rightPriceScale: { borderColor: 'rgba(255,255,255,0.10)', borderVisible: true },
+    rightPriceScale: {
+        borderColor: 'rgba(255,255,255,0.10)',
+        borderVisible: true,
+        minimumWidth: 58,
+    },
     timeScale: { borderColor: 'rgba(255,255,255,0.10)', borderVisible: true, timeVisible: true, secondsVisible: false },
 };
 
@@ -221,7 +225,7 @@ const ChartPane = forwardRef(({
     const isOscillator = type === 'line';
 
     return (
-        <div className="relative w-full border-b border-white/5 bg-black flex-shrink-0" style={{ height }}>
+        <div className="relative w-full border-b border-white/30 bg-black flex-shrink-0" style={{ height }}>
             {/* ── Pane header ── */}
             <div className="absolute top-1.5 left-2 z-10 flex items-center gap-2 flex-wrap">
                 {/* Title (with colored dot for oscillator panes) */}
@@ -380,7 +384,7 @@ const ChartContainer = ({
                 <React.Fragment key={pane.id}>
                     {/* Drag handle */}
                     <div
-                        className="w-full h-1 bg-white/8 hover:bg-white/20 cursor-ns-resize flex-shrink-0 transition-colors"
+                        className="w-full h-1 bg-white/30 hover:bg-white/45 cursor-ns-resize flex-shrink-0 transition-colors"
                         onMouseDown={(e) => handleDragStart(e, pane.id)}
                         title="Drag to resize"
                     />

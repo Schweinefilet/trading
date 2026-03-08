@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import html2canvas from 'html2canvas';
 import {
     Search, TrendingUp, BarChart2, Activity, Clock, Layers,
-    Settings, Camera, Maximize2, Star, Eye, Edit, Trash2, X, Plus,
+    Settings, Camera, Maximize2, Star, Eye, Trash2, X,
     ChevronDown, BarChart, LineChart, AreaChart, Box, History, AlertTriangle
 } from 'lucide-react';
 import StockChart from '../components/StockChart';
@@ -100,6 +101,11 @@ const StockDetail = () => {
     const [activeIndicators, setActiveIndicators] = useState(['rsi', 'sma_20', 'sma_50']);
     const [hoveredBar, setHoveredBar] = useState(null);
     const [showStatsPanel, setShowStatsPanel] = useState(false);
+    const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
+    const [showFooterBar, setShowFooterBar] = useState(true);
+    const [captureBusy, setCaptureBusy] = useState(false);
+    const settingsDropdownRef = useRef(null);
+    const captureFrameRef = useRef(null);
 
     // Reset hovered bar on ticker change
     useEffect(() => { setHoveredBar(null); }, [ticker]);
@@ -116,6 +122,18 @@ const StockDetail = () => {
         return () => document.removeEventListener('mousedown', handler);
     }, [showChartTypeDropdown]);
 
+    // Close settings dropdown on outside click
+    useEffect(() => {
+        if (!showSettingsDropdown) return;
+        const handler = (e) => {
+            if (settingsDropdownRef.current && !settingsDropdownRef.current.contains(e.target)) {
+                setShowSettingsDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showSettingsDropdown]);
+
     // Remove an oscillator pane by its pane id
     const handleRemovePane = useCallback((paneId) => {
         setActiveIndicators(prev => prev.filter(id => id !== paneId && id.split('_')[0] !== paneId));
@@ -125,6 +143,30 @@ const StockDetail = () => {
     const handleRemoveOverlay = useCallback((indicatorId) => {
         setActiveIndicators(prev => prev.filter(id => id !== indicatorId));
     }, []);
+
+    const handleCaptureChart = useCallback(async () => {
+        if (!captureFrameRef.current || captureBusy) return;
+        setShowSettingsDropdown(false);
+        setCaptureBusy(true);
+        try {
+            const canvas = await html2canvas(captureFrameRef.current, {
+                backgroundColor: '#000000',
+                scale: Math.min(window.devicePixelRatio || 1, 2),
+                useCORS: true,
+                logging: false,
+            });
+
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const link = document.createElement('a');
+            link.href = canvas.toDataURL('image/png');
+            link.download = `${ticker}_chart_${stamp}.png`;
+            link.click();
+        } catch (err) {
+            console.error('Failed to capture chart image:', err);
+        } finally {
+            setCaptureBusy(false);
+        }
+    }, [ticker, captureBusy]);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -165,7 +207,7 @@ const StockDetail = () => {
                     className="flex items-center gap-2 pr-4 border-r border-white/10 hover:opacity-80 transition-opacity"
                 >
                     <TrendingUp className="text-white w-5 h-5" />
-                    <span className="font-bold text-white tracking-widest text-sm">TV_CLONE</span>
+                    <span className="font-bold text-white tracking-widest text-sm">Tradr</span>
                 </button>
 
                 <form onSubmit={(e) => { e.preventDefault(); const t = searchInput.trim().toUpperCase(); if (t) { navigate(`/stock/${t}`); setSearchInput(''); } }} className="relative min-w-[160px] flex-grow max-w-xs">
@@ -263,22 +305,45 @@ const StockDetail = () => {
                     Stats
                 </button>
 
-                <div className="flex items-center gap-2 ml-auto">
-                    <button className="p-2 hover:bg-white/10 rounded text-slate-400"><Maximize2 className="w-5 h-5" /></button>
-                    <button className="p-2 hover:bg-white/10 rounded text-slate-400"><Settings className="w-5 h-5" /></button>
-                    <button className="p-2 hover:bg-white/10 rounded text-slate-400"><Camera className="w-5 h-5" /></button>
+                <div className="flex items-center gap-2 ml-auto relative" ref={settingsDropdownRef}>
+                    <button
+                        onClick={() => setShowSettingsDropdown(prev => !prev)}
+                        className={`p-2 rounded transition-colors ${showSettingsDropdown ? 'bg-white/15 text-white' : 'hover:bg-white/10 text-slate-400'}`}
+                        title="Chart settings"
+                    >
+                        <Settings className="w-5 h-5" />
+                    </button>
+                    {showSettingsDropdown && (
+                        <div className="absolute top-12 right-0 w-56 bg-black/95 border border-white/15 rounded-lg shadow-2xl z-50 p-2">
+                            <p className="text-[10px] uppercase font-bold tracking-widest px-2 py-1 text-slate-400">Chart Settings</p>
+                            <button
+                                onClick={() => setShowFooterBar(prev => !prev)}
+                                className="w-full text-left text-xs px-2 py-2 rounded hover:bg-white/10 text-slate-200"
+                            >
+                                {showFooterBar ? 'Hide' : 'Show'} OHLC footer
+                            </button>
+                            <button
+                                onClick={() => setShowStatsPanel(prev => !prev)}
+                                className="w-full text-left text-xs px-2 py-2 rounded hover:bg-white/10 text-slate-200"
+                            >
+                                {showStatsPanel ? 'Hide' : 'Show'} stats panel
+                            </button>
+                            <p className="text-[10px] px-2 py-1 text-slate-500">More options coming soon.</p>
+                        </div>
+                    )}
+                    <button
+                        onClick={handleCaptureChart}
+                        disabled={captureBusy}
+                        className={`p-2 rounded transition-colors ${captureBusy ? 'text-slate-600 cursor-not-allowed' : 'hover:bg-white/10 text-slate-400'}`}
+                        title="Download chart snapshot"
+                    >
+                        <Camera className="w-5 h-5" />
+                    </button>
                 </div>
             </header>
 
             <div className="flex flex-grow overflow-hidden">
-                <aside className="w-12 border-r border-white/10 flex flex-col items-center py-4 gap-4 bg-black flex-shrink-0">
-                    <button className="p-2 hover:bg-white/10 rounded text-white"><Maximize2 className="w-5 h-5" /></button>
-                    <div className="w-6 h-px bg-white/10" />
-                    <button className="p-2 hover:bg-white/10 rounded text-slate-400"><Edit className="w-5 h-5" /></button>
-                    <button className="p-2 hover:bg-white/10 rounded text-slate-400"><Plus className="w-5 h-5" /></button>
-                </aside>
-
-                <main className="flex-grow relative bg-black overflow-hidden" style={{ minHeight: '400px' }}>
+                <main ref={captureFrameRef} className="flex-grow relative bg-black overflow-hidden" style={{ minHeight: '400px' }}>
                     {loading ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-50">
                             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
@@ -321,6 +386,7 @@ const StockDetail = () => {
                 )}
             </div>
 
+            {showFooterBar && (
             <footer className="h-8 border-t border-white/10 bg-black flex items-center px-4 gap-6 text-[10px] font-medium text-slate-400 flex-shrink-0">
                 <div className="flex gap-4">
                     {(() => {
@@ -338,6 +404,7 @@ const StockDetail = () => {
                     })()}
                 </div>
             </footer>
+            )}
         </div>
     );
 };
