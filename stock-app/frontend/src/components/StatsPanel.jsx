@@ -61,17 +61,26 @@ function gradeColor(grade) {
 }
 
 function actionBadge(action) {
-    if (!action) return null;
-    const a = action.toLowerCase();
-    if (a === 'up' || a === 'upgrade') return 'bg-emerald-500/15 text-emerald-400';
-    if (a === 'down' || a === 'downgrade') return 'bg-rose-500/15 text-rose-400';
-    return 'bg-slate-700 text-slate-400';
+    const normalized = normalizeAction(action);
+    if (normalized === 'Up') return 'bg-emerald-500/15 text-emerald-400';
+    if (normalized === 'Down') return 'bg-rose-500/15 text-rose-400';
+    return 'bg-slate-700 text-slate-300';
+}
+
+function normalizeAction(action) {
+    if (!action) return 'Neu';
+    const a = String(action).toLowerCase();
+    if (a === 'up' || a === 'upgrade') return 'Up';
+    if (a === 'down' || a === 'downgrade') return 'Down';
+    // Neutral/non-directional actions: maintain/reiterate/initiation and unknowns
+    return 'Neu';
 }
 
 // ── KDE Price Target Distribution Chart ──────────────────────────────────────
 function PriceTargetKDE({ low, mean, high, current, ticker, individualTargets }) {
     const W = 288, H = 90;
-    const PAD = { l: 2, r: 2, t: 12, b: 24 };
+    // Extra horizontal inset keeps low/high/current marker lines away from edges.
+    const PAD = { l: 8, r: 8, t: 12, b: 24 };
     const iW = W - PAD.l - PAD.r;
     const iH = H - PAD.t - PAD.b;
 
@@ -100,14 +109,22 @@ function PriceTargetKDE({ low, mean, high, current, ticker, individualTargets })
         const avg = targets.reduce((s, v) => s + v, 0) / n;
         const variance = targets.reduce((s, v) => s + (v - avg) ** 2, 0) / n;
         const std = Math.sqrt(variance);
-        // Reduced multiplier (0.55 vs Scott's 1.06) for sharper, less-smooth peaks
-        const bw = Math.max(0.55 * (std || avg * 0.05) * Math.pow(n, -0.2), avg * 0.005);
+        // Use tighter bandwidth for sharper (less smooth) profile.
+        const bw = Math.max(0.35 * (std || avg * 0.05) * Math.pow(n, -0.2), avg * 0.0035);
 
         const minT = Math.min(...targets);
         const maxT = Math.max(...targets);
-        const margin = Math.max((maxT - minT) * 0.05, bw);
-        xMin = minT - margin;
-        xMax = maxT + margin;
+        // Keep full target distribution visible, but always include low/high/current markers.
+        const minCandidates = [minT];
+        const maxCandidates = [maxT];
+        if (low != null) minCandidates.push(low);
+        if (high != null) maxCandidates.push(high);
+        if (current != null) {
+            minCandidates.push(current);
+            maxCandidates.push(current);
+        }
+        xMin = Math.min(...minCandidates);
+        xMax = Math.max(...maxCandidates);
 
         // KDE: sum of Gaussian kernels, normalized to peak=1
         const density = (x) => targets.reduce(
@@ -124,9 +141,9 @@ function PriceTargetKDE({ low, mean, high, current, ticker, individualTargets })
     } else {
         // Fallback: Gaussian centered at mean using analyst low/high range
         const sigma = Math.max((high - low) / 3.5, 1);
-        const margin = (high - low) * 0.12;
-        xMin = Math.min(low - margin, current != null ? current - margin : low - margin);
-        xMax = Math.max(high + margin, current != null ? current + margin : high + margin);
+        // Keep visible range bound to [low, high], except when current sits outside.
+        xMin = current != null ? Math.min(low, current) : low;
+        xMax = current != null ? Math.max(high, current) : high;
         const xSpan = Math.max(xMax - xMin, 1);
         const N = 120;
         pts = Array.from({ length: N + 1 }, (_, i) => {
@@ -503,8 +520,8 @@ const StatsPanel = ({ ticker, onClose }) => {
                                             <td className="px-2 py-1.5 text-slate-300 max-w-[100px] truncate text-[11px]">{row.Firm || '—'}</td>
                                             <td className="px-2 py-1.5">
                                                 {row.Action && (
-                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold capitalize ${actionBadge(row.Action)}`}>
-                                                        {row.Action}
+                                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${actionBadge(row.Action)}`}>
+                                                        {normalizeAction(row.Action)}
                                                     </span>
                                                 )}
                                             </td>

@@ -80,6 +80,7 @@ class PortfolioAnalytics:
             
             holdings.append({
                 'ticker': ticker,
+                'long_name': quote.get('longName') if quote else ticker,
                 'shares': pos['shares'],
                 'avg_cost': pos['avg_cost'],
                 'current_price': curr_price,

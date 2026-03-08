@@ -222,6 +222,17 @@ const StockDetail = () => {
                     />
                 </form>
 
+                <div className="hidden lg:flex flex-col min-w-0 max-w-sm">
+                    <span className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
+                        {quote?.longName || ticker}
+                    </span>
+                    {quote?.sector && (
+                        <span className="text-[10px] truncate" style={{ color: 'var(--text-tertiary)' }}>
+                            {quote.sector}
+                        </span>
+                    )}
+                </div>
+
                 <div className="flex bg-white/7 p-0.5 rounded border border-white/10 ml-2">
                     {TIMEFRAMES.map(tf => (
                         <button

@@ -580,7 +580,7 @@ const Dashboard = () => {
                         {WATCHLIST_TABS.map(tab => (
                             <button
                                 key={tab.id}
-                                onClick={() => { setActiveTab(tab.id); setSortBy('default'); }}
+                                onClick={() => { setActiveTab(tab.id); setSortBy('pct_desc'); }}
                                 className="flex items-center gap-1.5 rounded-[10px] text-sm transition-all"
                                 style={activeTab === tab.id
                                     ? { background: 'rgba(255,255,255,0.15)', borderRadius: '10px', color: '#fff', padding: '6px 14px', fontWeight: 600 }
