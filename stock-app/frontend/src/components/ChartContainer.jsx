@@ -5,17 +5,17 @@ import DrawingOverlay from './DrawingOverlay';
 
 const CHART_OPTIONS = {
     layout: {
-        background: { color: '#131722' },
+        background: { color: '#000000' },
         textColor: '#d1d4dc',
         fontSize: 11
     },
     grid: {
-        vertLines: { color: '#1e222d' },
-        horzLines: { color: '#1e222d' }
+        vertLines: { color: 'rgba(255,255,255,0.06)' },
+        horzLines: { color: 'rgba(255,255,255,0.06)' }
     },
     crosshair: { mode: CrosshairMode.Normal },
-    rightPriceScale: { borderColor: '#2a2e39', borderVisible: true },
-    timeScale: { borderColor: '#2a2e39', borderVisible: true, timeVisible: true, secondsVisible: false },
+    rightPriceScale: { borderColor: 'rgba(255,255,255,0.10)', borderVisible: true },
+    timeScale: { borderColor: 'rgba(255,255,255,0.10)', borderVisible: true, timeVisible: true, secondsVisible: false },
 };
 
 const prepareData = (rows) => {
@@ -114,6 +114,16 @@ const ChartPane = forwardRef(({
                 upColor: '#26a69a', downColor: '#ef5350',
                 borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
             });
+        } else if (type === 'hollow_candle') {
+            series = chart.addSeries(CandlestickSeries, {
+                upColor: '#000000',        // hollow body matches chart background
+                downColor: '#ef5350',      // filled bearish body
+                borderVisible: true,
+                borderUpColor: '#26a69a',
+                borderDownColor: '#ef5350',
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+            });
         } else if (type === 'bar') {
             series = chart.addSeries(BarSeries, { upColor: '#26a69a', downColor: '#ef5350' });
         } else if (type === 'area') {
@@ -158,7 +168,11 @@ const ChartPane = forwardRef(({
 
         const safeData = prepareData(data);
         if (safeData.length > 0) {
-            mainSeriesRef.current.setData(safeData);
+            // LineSeries and AreaSeries only accept {time, value} — strip extra OHLCV fields
+            const seriesData = (type === 'line' || type === 'area')
+                ? safeData.map(({ time, value }) => ({ time, value }))
+                : safeData;
+            mainSeriesRef.current.setData(seriesData);
         }
 
         // Remove series for overlays no longer in the array
@@ -183,7 +197,7 @@ const ChartPane = forwardRef(({
             const ovData = prepareData(ov.data);
             seriesRefs.current[ov.id].setData(ovData);
         });
-    }, [data, overlays, isReady]);
+    }, [data, overlays, isReady, type]);
 
     // ── Handle container resize ────────────────────────────────────────────
     useEffect(() => {
@@ -207,7 +221,7 @@ const ChartPane = forwardRef(({
     const isOscillator = type === 'line';
 
     return (
-        <div className="relative w-full border-b border-[#2a2e39] bg-[#131722] flex-shrink-0" style={{ height }}>
+        <div className="relative w-full border-b border-white/5 bg-black flex-shrink-0" style={{ height }}>
             {/* ── Pane header ── */}
             <div className="absolute top-1.5 left-2 z-10 flex items-center gap-2 flex-wrap">
                 {/* Title (with colored dot for oscillator panes) */}
@@ -293,18 +307,25 @@ const ChartContainer = ({
 }) => {
     const paneRefs = useRef({});
     const isSyncing = useRef(false);
+    const outerRef = useRef(null);
     const [paneHeights, setPaneHeights] = useState({});
-    const [windowHeight, setWindowHeight] = useState(window.innerHeight);
+    const [containerHeight, setContainerHeight] = useState(600);
 
+    // Measure the actual container height so the main pane fills exactly the
+    // remaining space — no gap, no overflow, regardless of layout changes.
     useEffect(() => {
-        const onResize = () => setWindowHeight(window.innerHeight);
-        window.addEventListener('resize', onResize);
-        return () => window.removeEventListener('resize', onResize);
+        if (!outerRef.current) return;
+        const ro = new ResizeObserver(entries => {
+            if (entries[0]) setContainerHeight(entries[0].contentRect.height);
+        });
+        ro.observe(outerRef.current);
+        return () => ro.disconnect();
     }, []);
 
     const getPaneHeight = (id) => paneHeights[id] ?? 150;
     const totalOscHeight = panes.reduce((sum, p) => sum + getPaneHeight(p.id), 0);
-    const mainHeight = Math.max(200, windowHeight - 150 - totalOscHeight);
+    const dragHandleTotal = panes.length * 4; // each h-1 drag handle = 4px
+    const mainHeight = Math.max(200, containerHeight - totalOscHeight - dragHandleTotal);
 
     const handleDragStart = useCallback((e, paneId) => {
         e.preventDefault();
@@ -335,7 +356,7 @@ const ChartContainer = ({
     }, []);
 
     return (
-        <div className="flex flex-col w-full h-full bg-[#131722] overflow-hidden">
+        <div ref={outerRef} className="flex flex-col w-full h-full bg-black overflow-hidden">
             {/* ── Main price pane ── */}
             <ChartPane
                 ref={el => paneRefs.current['main'] = el}
@@ -359,7 +380,7 @@ const ChartContainer = ({
                 <React.Fragment key={pane.id}>
                     {/* Drag handle */}
                     <div
-                        className="w-full h-1 bg-[#2a2e39] hover:bg-[#2962ff]/50 cursor-ns-resize flex-shrink-0 transition-colors"
+                        className="w-full h-1 bg-white/8 hover:bg-white/20 cursor-ns-resize flex-shrink-0 transition-colors"
                         onMouseDown={(e) => handleDragStart(e, pane.id)}
                         title="Drag to resize"
                     />
