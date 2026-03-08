@@ -9,7 +9,7 @@ export const computeHeikinAshi = (data) => {
 
     data.forEach((d, i) => {
         const close = (d.Open + d.High + d.Low + d.Close) / 4;
-        const open = prevHA ? (prevHA.open + prevHA.close) / 2 : (d.Open + d.Close) / 2;
+        const open = prevHA ? (prevHA.Open + prevHA.Close) / 2 : (d.Open + d.Close) / 2;
         const high = Math.max(d.High, open, close);
         const low = Math.min(d.Low, open, close);
 

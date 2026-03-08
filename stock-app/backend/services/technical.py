@@ -21,17 +21,29 @@ class TechnicalService:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
         # TREND
-        if 'sma' in requested_indicators or any(i.startswith('sma_') for i in requested_indicators):
-            lengths = [9, 20, 50, 100, 200]
-            for length in lengths:
-                if f'sma_{length}' in requested_indicators or 'sma' in requested_indicators:
-                    df.ta.sma(length=length, append=True)
-        
-        if 'ema' in requested_indicators or any(i.startswith('ema_') for i in requested_indicators):
-            lengths = [9, 20, 50, 100, 200]
-            for length in lengths:
-                if f'ema_{length}' in requested_indicators or 'ema' in requested_indicators:
-                    df.ta.ema(length=length, append=True)
+        if 'sma' in requested_indicators:
+            for length in [9, 20, 50, 100, 200]:
+                df.ta.sma(length=length, append=True)
+        else:
+            for ind in requested_indicators:
+                if ind.startswith('sma_'):
+                    try:
+                        length = int(ind[4:])
+                        df.ta.sma(length=length, append=True)
+                    except ValueError:
+                        pass
+
+        if 'ema' in requested_indicators:
+            for length in [9, 20, 50, 100, 200]:
+                df.ta.ema(length=length, append=True)
+        else:
+            for ind in requested_indicators:
+                if ind.startswith('ema_'):
+                    try:
+                        length = int(ind[4:])
+                        df.ta.ema(length=length, append=True)
+                    except ValueError:
+                        pass
 
         if 'bbands' in requested_indicators or 'bb' in requested_indicators: 
             df.ta.bbands(append=True)

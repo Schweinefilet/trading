@@ -136,6 +136,65 @@ class DataFetcher:
             print(f"Fundamentals error for {ticker}: {e}")
             return None
 
+    def get_analyst(self, ticker):
+        data = CacheService.get(ticker, 'analyst')
+        if data:
+            return data
+
+        try:
+            stock = yf.Ticker(ticker)
+        except Exception as e:
+            print(f"Analyst yfinance init error for {ticker}: {e}")
+            return None
+
+        result = {}
+
+        try:
+            targets = stock.analyst_price_targets
+            if targets:
+                result['price_targets'] = {
+                    'low': targets.get('low'),
+                    'mean': targets.get('mean'),
+                    'high': targets.get('high'),
+                    'current': targets.get('current'),
+                    'numberOfAnalysts': targets.get('numberOfAnalysts'),
+                }
+            else:
+                result['price_targets'] = {}
+        except Exception as e:
+            print(f"Analyst price targets error for {ticker}: {e}")
+            result['price_targets'] = {}
+
+        try:
+            recs = stock.recommendations_summary
+            if recs is not None and not recs.empty:
+                recs_list = recs.head(4).to_dict(orient='records')
+                result['ratings'] = recs_list
+            else:
+                result['ratings'] = []
+        except Exception as e:
+            print(f"Analyst recommendations error for {ticker}: {e}")
+            result['ratings'] = []
+
+        try:
+            upgrades = stock.upgrades_downgrades
+            if upgrades is not None and not upgrades.empty:
+                upgrades = upgrades.reset_index()
+                # Convert DatetimeIndex column to string
+                date_col = upgrades.columns[0]
+                upgrades[date_col] = upgrades[date_col].astype(str)
+                upgrades = upgrades.head(10)
+                result['upgrades_downgrades'] = upgrades[['GradeDate', 'Firm', 'ToGrade', 'FromGrade', 'Action']].to_dict(orient='records')
+            else:
+                result['upgrades_downgrades'] = []
+        except Exception as e:
+            print(f"Analyst upgrades/downgrades error for {ticker}: {e}")
+            result['upgrades_downgrades'] = []
+
+        if result:
+            CacheService.set(ticker, 'analyst', result)
+        return result
+
     def get_financials(self, ticker):
         data = CacheService.get(ticker, 'financials')
         if data:
