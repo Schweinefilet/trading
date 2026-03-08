@@ -80,9 +80,12 @@ def compute_indicators(df: pd.DataFrame, cfg: Optional[object] = None) -> pd.Dat
 
     # Bollinger Bands for Mean Reversion (Phase 2)
     bbands = ta.bbands(df["close"], length=20, std=2.0)
-    if bbands is not None:
-        df["bb_lower"] = bbands["BBL_20_2.0"]
-        df["bb_upper"] = bbands["BBU_20_2.0"]
+    if bbands is not None and not bbands.empty:
+        # Robustly find "BBL" and "BBU" columns as pandas-ta naming can vary by version
+        lower_cols = [c for c in bbands.columns if c.startswith("BBL_")]
+        upper_cols = [c for c in bbands.columns if c.startswith("BBU_")]
+        df["bb_lower"] = bbands[lower_cols[0]] if lower_cols else np.nan
+        df["bb_upper"] = bbands[upper_cols[0]] if upper_cols else np.nan
     else:
         df["bb_lower"] = np.nan
         df["bb_upper"] = np.nan
