@@ -120,14 +120,14 @@ class TradingBot:
             from alpaca.trading.client import TradingClient
             from alpaca.data.historical import StockHistoricalDataClient
 
-            trading_client = TradingClient(
+            self.trading_client = TradingClient(
                 api_key=config.ALPACA_API_KEY,
                 secret_key=config.ALPACA_SECRET_KEY,
                 paper=self.paper,
             )
 
-            self.order_manager.set_client(trading_client)
-            self.reconciler.set_client(trading_client)
+            self.order_manager.set_client(self.trading_client)
+            self.reconciler.set_client(self.trading_client)
 
             # Fetch account equity
             account = trading_client.get_account()
@@ -138,6 +138,16 @@ class TradingBot:
             logger.error(f"Failed to initialize Alpaca client: {e}")
             logger.info("Running in offline/simulation mode.")
             self.equity = config.STARTING_CAPITAL
+
+    def _update_account_equity(self):
+        """Fetch latest equity from Alpaca."""
+        if hasattr(self, 'trading_client'):
+            try:
+                account = self.trading_client.get_account()
+                self.equity = float(account.equity)
+                # Note: Equity is used globally for position sizing
+            except Exception as e:
+                logger.error(f"Failed to update equity: {e}")
 
     def _reconcile(self):
         """Reconcile local state with server."""
@@ -255,6 +265,9 @@ class TradingBot:
                 # Process signals
                 self._process_signals()
 
+                # Check advanced exits (EOD Profit Lock, Dead Money)
+                self._check_advanced_exits()
+
                 # Heartbeat check
                 now = time.monotonic()
                 if now - self.last_heartbeat >= config.HEARTBEAT_INTERVAL_SEC:
@@ -277,6 +290,9 @@ class TradingBot:
             log_circuit_breaker(reason, {"daily_pnl": self.daily_pnl}, "HALT")
             return
 
+        # Compute leaderboard/rankings for Elite Selection
+        leaderboard = self._get_leaderboard()
+
         # PDT check
         pdt_status = self.pdt_tracker.get_status(self.equity)
         day_trades_remaining = pdt_status["day_trades_remaining"]
@@ -288,7 +304,16 @@ class TradingBot:
                 continue
 
             df = self.bar_data[sym]
-            signal = generate_signals(sym, df, self.regime_state)
+            
+            # Pass ranking to signal generator
+            rank_data = leaderboard.get(sym, {"rank": 999, "percentile": 1.0})
+            
+            signal = generate_signals(
+                sym, df, self.regime_state, 
+                rank_int=rank_data["rank"], 
+                rank_percentile=rank_data["percentile"]
+            )
+            
             if signal:
                 log_signal(
                     sym, signal.direction.value, signal.signal_strength,
@@ -326,6 +351,16 @@ class TradingBot:
         dd_mult = self.circuit_breaker.get_size_multiplier(self.equity)
 
         heat_summary = self.heat_manager.get_summary(self.equity)
+        
+        # SPY ATR for Volatility Gating
+        spy_atr = 0.0
+        spy_atr_sma = 0.0
+        if "SPY" in self.bar_data:
+            spy_df = self.bar_data["SPY"]
+            if not spy_df.empty:
+                spy_atr = spy_df.iloc[-1].get("atr", 0)
+                spy_atr_sma = spy_df.iloc[-15:-1]["atr"].mean() if len(spy_df) >= 15 else spy_atr
+
         shares = calculate_position_size(
             equity=self.equity,
             entry_price=sig.entry_price,
@@ -335,6 +370,8 @@ class TradingBot:
             peak_equity=self.circuit_breaker.state.peak_equity,
             current_deployed=heat_summary.get("deployed_dollars", 0),
             current_portfolio_heat=heat_summary.get("heat_dollars", 0),
+            spy_atr=spy_atr,
+            spy_atr_sma=spy_atr_sma,
         )
 
         if shares < 1:
@@ -410,6 +447,9 @@ class TradingBot:
         self.last_heartbeat = time.monotonic()
         connected = self.data_stream.is_connected
 
+        # Refresh equity from Alpaca periodically
+        self._update_account_equity()
+
         log_heartbeat(len(self.heat_manager.positions), self.daily_pnl, connected)
 
         # Print dashboard
@@ -468,6 +508,70 @@ class TradingBot:
         # Check stream health
         if connected and self.data_stream.seconds_since_last_data() > 120:
             logger.warning("No data received in 2 minutes. Stream may need reconnect.")
+
+    def _get_leaderboard(self) -> dict:
+        """Compute RS ranking (roc_125) for all tickers."""
+        scores = {}
+        for sym, df in self.bar_data.items():
+            if sym in ["SPY", "QQQ"]:
+                continue
+            if not df.empty:
+                val = df.iloc[-1].get("roc_125", np.nan)
+                if not np.isnan(val):
+                    scores[sym] = val
+        
+        if not scores:
+            return {}
+            
+        # Rank: higher roc = better (rank 1)
+        sorted_syms = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+        num = len(sorted_syms)
+        return {
+            sym: {"rank": i + 1, "percentile": (i + 1) / num}
+            for i, sym in enumerate(sorted_syms)
+        }
+
+    def _check_advanced_exits(self):
+        """Implement EOD Profit Lock and Dead Money time-stops."""
+        import pytz
+        et = pytz.timezone("US/Eastern")
+        now_et = datetime.now(et)
+        
+        for sym, pos in list(self.heat_manager.positions.items()):
+            # 1. 3:30 PM Profit Locking
+            if (now_et.hour == 15 and now_et.minute >= 30) or (now_et.hour >= 16):
+                # Check current price vs entry
+                curr_price = self.quotes.get(sym, {}).get("bid") if pos.side == "LONG" else self.quotes.get(sym, {}).get("ask")
+                if curr_price:
+                    if (pos.side == "LONG" and curr_price > pos.entry_price) or \
+                       (pos.side == "SHORT" and curr_price < pos.entry_price):
+                        logger.info(f"EOD Profit Lock triggered for {sym} at {curr_price}")
+                        self._liquidate_position(sym, "eod_profit_lock")
+                        continue
+
+            # 2. Dead Money (48h + < 1.0x ATR profit)
+            hold_hours = (datetime.now() - pos.entry_time).total_seconds() / 3600
+            if hold_hours >= config.MAX_HOLD_HOURS:
+                curr_price = self.quotes.get(sym, {}).get("bid") if pos.side == "LONG" else self.quotes.get(sym, {}).get("ask")
+                if curr_price and pos.atr > 0:
+                    profit_atr = abs(curr_price - pos.entry_price) / pos.atr
+                    if profit_atr < 1.0:
+                        logger.info(f"Dead Money exit triggered for {sym} (Hold: {hold_hours:.1f}h, Profit: {profit_atr:.2f} ATR)")
+                        self._liquidate_position(sym, "time_stop_dead_money")
+
+    def _liquidate_position(self, symbol: str, reason: str):
+        """Close a position immediately."""
+        pos = self.heat_manager.positions.get(symbol)
+        if not pos:
+            return
+            
+        side = "sell" if pos.side == "LONG" else "buy"
+        order_id = self.order_manager.submit_market_close(symbol, pos.shares, side)
+        if order_id:
+            logger.info(f"Liquidated {symbol}: {reason}")
+            # OrderManager.handle_fill will eventually remove it from heat_manager if fully synced
+            # But for safety, we should really track it better. 
+            # In main.py, heat_manager is updated via sync_state/reconcile.
 
     def stop(self):
         """Graceful shutdown."""
