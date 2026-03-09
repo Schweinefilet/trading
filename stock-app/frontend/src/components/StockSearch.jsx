@@ -99,7 +99,7 @@ const StockSearch = () => {
                         ref={inputRef}
                         type="text"
                         placeholder="Search ticker or company..."
-                        className="w-full bg-slate-700/80 border border-slate-600 rounded-full py-2 pl-10 pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white placeholder-slate-400 text-sm transition-all"
+                        className="w-full bg-zinc-700/85 border border-zinc-600 rounded-full py-2 pl-10 pr-8 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent text-white placeholder-zinc-400 text-sm transition-all"
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         onKeyDown={handleKeyDown}

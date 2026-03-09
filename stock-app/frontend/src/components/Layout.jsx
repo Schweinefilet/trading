@@ -7,23 +7,34 @@ const Layout = ({ children }) => {
     const location = useLocation();
 
     const navItems = [
-        { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-        { path: '/portfolio', label: 'Portfolio', icon: Wallet },
+        { path: '/',          label: 'Dashboard', icon: LayoutDashboard },
+        { path: '/portfolio', label: 'Portfolio',  icon: Wallet },
     ];
 
     return (
-        <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col">
-            <header className="bg-slate-800 border-b border-slate-700 h-16 flex items-center px-4 md:px-8 justify-between sticky top-0 z-40">
-                <Link to="/" className="flex items-center space-x-2 text-blue-500 font-bold text-xl">
-                    <TrendingUp className="h-8 w-8" />
-                    <span className="hidden sm:inline">Tradr</span>
+        <div className="min-h-screen text-white flex flex-col">
+            <header
+                className="glass h-16 flex items-center px-4 md:px-8 justify-between"
+                style={{
+                    borderRadius: 0,
+                    borderLeft: 'none',
+                    borderRight: 'none',
+                    borderTop: 'none',
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 100,
+                }}
+            >
+                <Link to="/" className="flex items-center space-x-2 font-bold text-xl text-white">
+                    <TrendingUp className="h-8 w-8" style={{ color: 'var(--accent)' }} />
+                    <span className="hidden sm:inline" style={{ color: 'var(--text-primary)' }}>Tradr</span>
                 </Link>
 
                 <div className="flex-1 max-w-lg mx-4">
                     <StockSearch />
                 </div>
 
-                <nav className="flex space-x-1 sm:space-x-4">
+                <nav className="flex space-x-1 sm:space-x-2">
                     {navItems.map((item) => {
                         const Icon = item.icon;
                         const isActive = location.pathname === item.path;
@@ -31,10 +42,11 @@ const Layout = ({ children }) => {
                             <Link
                                 key={item.path}
                                 to={item.path}
-                                className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${isActive
-                                        ? 'bg-slate-700 text-blue-400 font-medium'
-                                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
-                                    }`}
+                                className="flex items-center space-x-2 px-3 py-2 rounded-xl transition-all"
+                                style={isActive
+                                    ? { background: 'rgba(255,255,255,0.15)', color: '#fff', fontWeight: 600 }
+                                    : { color: 'rgba(255,255,255,0.60)' }
+                                }
                             >
                                 <Icon className="h-5 w-5" />
                                 <span className="hidden md:inline">{item.label}</span>
@@ -48,8 +60,8 @@ const Layout = ({ children }) => {
                 {children}
             </main>
 
-            <footer className="p-8 border-t border-slate-800 text-slate-500 text-center text-sm">
-                Tradr Analytics &copy; {new Date().getFullYear()} &bull; Built with yfinance & pandas-ta
+            <footer className="p-8 border-t border-white/10 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
+                Tradr Analytics &copy; {new Date().getFullYear()} &bull; Built with yfinance &amp; pandas-ta
             </footer>
         </div>
     );
