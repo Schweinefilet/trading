@@ -72,29 +72,46 @@ const solidColor = (hex) => {
     return hex.length > 7 ? hex.slice(0, 7) : hex;
 };
 
+// Format a unix timestamp (seconds) into a readable crosshair label
+function formatCrosshairTime(time) {
+    if (time === undefined || time === null) return '';
+    const date = new Date(
+        typeof time === 'string' ? time : time * 1000
+    );
+    if (isNaN(date.getTime())) return '';
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (isToday) return timeStr;
+    return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${timeStr}`;
+}
+
 // ── ChartPane ─────────────────────────────────────────────────────────────────
 const ChartPane = forwardRef(({
     id,
     data = [],
     type,
     title,
-    color = '#2962ff',     // line/area series color
+    color = '#2962ff',
     height,
     isLast,
     syncTimeAxis,
+    syncCrosshair,       // callback: (param, sourceId) => void
+    showTimeLabel,       // show floating time label at bottom of pane
     overlays = [],
     drawings = [],
     onAddDrawing,
     activeTool = 'none',
     onCrosshairMove,
     onClose,
-    onRemoveOverlay,       // only passed to main price pane
+    onRemoveOverlay,
 }, ref) => {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const mainSeriesRef = useRef(null);
     const seriesRefs = useRef({});
     const [isReady, setIsReady] = useState(false);
+    const [timeLabel, setTimeLabel] = useState(null); // { x: number, text: string } | null
 
     useImperativeHandle(ref, () => ({
         getChart: () => chartRef.current,
@@ -120,8 +137,8 @@ const ChartPane = forwardRef(({
             });
         } else if (type === 'hollow_candle') {
             series = chart.addSeries(CandlestickSeries, {
-                upColor: '#000000',        // hollow body matches chart background
-                downColor: '#ef5350',      // filled bearish body
+                upColor: '#000000',
+                downColor: '#ef5350',
                 borderVisible: true,
                 borderUpColor: '#26a69a',
                 borderDownColor: '#ef5350',
@@ -137,7 +154,6 @@ const ChartPane = forwardRef(({
                 bottomColor: `${solidColor(color)}00`,
             });
         } else {
-            // line — used for oscillator panes
             series = chart.addSeries(LineSeries, { color, lineWidth: 2 });
         }
 
@@ -148,38 +164,50 @@ const ChartPane = forwardRef(({
             if (syncTimeAxis) syncTimeAxis(range, id);
         });
 
-        if (onCrosshairMove) {
-            chart.subscribeCrosshairMove((param) => {
+        chart.subscribeCrosshairMove((param) => {
+            // ── Time label overlay (for panes without a visible time axis) ──
+            if (showTimeLabel) {
+                if (param?.point && param?.time !== undefined) {
+                    setTimeLabel({ x: param.point.x, text: formatCrosshairTime(param.time) });
+                } else {
+                    setTimeLabel(null);
+                }
+            }
+
+            // ── Sync crosshair to other panes ──
+            if (syncCrosshair) syncCrosshair(param, id);
+
+            // ── OHLCV readout for parent ──
+            if (onCrosshairMove) {
                 if (!param || !param.point || !param.seriesData) {
                     onCrosshairMove(null);
                     return;
                 }
                 const bar = param.seriesData.get(mainSeriesRef.current);
                 onCrosshairMove(bar || null);
-            });
-        }
+            }
+        });
 
         return () => {
             setIsReady(false);
+            setTimeLabel(null);
             seriesRefs.current = {};
             chart.remove();
         };
-    }, [id, type, isLast, color]); // color in deps so oscillator panes use the right color
+    }, [id, type, isLast, color]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Update data + overlays (with stale series cleanup) ─────────────────
+    // ── Update data + overlays ─────────────────────────────────────────────
     useEffect(() => {
         if (!isReady || !mainSeriesRef.current || !data) return;
 
         const safeData = prepareData(data);
         if (safeData.length > 0) {
-            // LineSeries and AreaSeries only accept {time, value} — strip extra OHLCV fields
             const seriesData = (type === 'line' || type === 'area')
                 ? safeData.map(({ time, value }) => ({ time, value }))
                 : safeData;
             mainSeriesRef.current.setData(seriesData);
         }
 
-        // Remove series for overlays no longer in the array
         const currentIds = new Set(overlays.map(o => o.id));
         Object.keys(seriesRefs.current).forEach(sid => {
             if (!currentIds.has(sid)) {
@@ -188,7 +216,6 @@ const ChartPane = forwardRef(({
             }
         });
 
-        // Add or update overlay series
         overlays.forEach(ov => {
             if (!seriesRefs.current[ov.id]) {
                 seriesRefs.current[ov.id] = chartRef.current.addSeries(LineSeries, {
@@ -210,7 +237,7 @@ const ChartPane = forwardRef(({
         }
     }, [height]);
 
-    // ── Overlay legend chips (one per unique sourceId) ─────────────────────
+    // ── Overlay legend chips ───────────────────────────────────────────────
     const overlayChips = useMemo(() => {
         const seen = new Set();
         return overlays.filter(ov => {
@@ -228,7 +255,6 @@ const ChartPane = forwardRef(({
         <div className="relative w-full border-b border-white/30 bg-black flex-shrink-0" style={{ height }}>
             {/* ── Pane header ── */}
             <div className="absolute top-1.5 left-2 z-10 flex items-center gap-2 flex-wrap">
-                {/* Title (with colored dot for oscillator panes) */}
                 {title && (
                     <span className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1 pointer-events-none">
                         {isOscillator && (
@@ -238,7 +264,6 @@ const ChartPane = forwardRef(({
                     </span>
                 )}
 
-                {/* Overlay legend chips (for main price pane overlays) */}
                 {overlayChips.map(ov => (
                     <span
                         key={ov.sourceId ?? ov.id}
@@ -261,7 +286,6 @@ const ChartPane = forwardRef(({
                     </span>
                 ))}
 
-                {/* Sub-indicator chips for oscillator panes (no remove button) */}
                 {isOscillator && overlays.filter(ov => ov.label).map(ov => (
                     <span key={ov.id} className="flex items-center gap-0.5 text-[10px] font-bold pointer-events-none">
                         <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: solidColor(ov.color) }} />
@@ -269,7 +293,6 @@ const ChartPane = forwardRef(({
                     </span>
                 ))}
 
-                {/* Close button for oscillator panes */}
                 {onClose && (
                     <button
                         onClick={onClose}
@@ -282,6 +305,31 @@ const ChartPane = forwardRef(({
             </div>
 
             <div ref={containerRef} className="w-full h-full" />
+
+            {/* ── Floating time label at bottom of pane (when time axis is hidden) ── */}
+            {showTimeLabel && timeLabel && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        bottom: 0,
+                        left: timeLabel.x,
+                        transform: 'translateX(-50%)',
+                        background: '#1e222d',
+                        color: '#d1d4dc',
+                        fontSize: '10px',
+                        fontFamily: 'monospace',
+                        padding: '1px 5px',
+                        border: '1px solid rgba(255,255,255,0.25)',
+                        borderRadius: '2px',
+                        pointerEvents: 'none',
+                        zIndex: 20,
+                        whiteSpace: 'nowrap',
+                        lineHeight: '16px',
+                    }}
+                >
+                    {timeLabel.text}
+                </div>
+            )}
 
             {id === 'main' && isReady && (
                 <DrawingOverlay
@@ -311,12 +359,11 @@ const ChartContainer = ({
 }) => {
     const paneRefs = useRef({});
     const isSyncing = useRef(false);
+    const isSyncingCrosshair = useRef(false);
     const outerRef = useRef(null);
     const [paneHeights, setPaneHeights] = useState({});
     const [containerHeight, setContainerHeight] = useState(600);
 
-    // Measure the actual container height so the main pane fills exactly the
-    // remaining space — no gap, no overflow, regardless of layout changes.
     useEffect(() => {
         if (!outerRef.current) return;
         const ro = new ResizeObserver(entries => {
@@ -328,7 +375,7 @@ const ChartContainer = ({
 
     const getPaneHeight = (id) => paneHeights[id] ?? 150;
     const totalOscHeight = panes.reduce((sum, p) => sum + getPaneHeight(p.id), 0);
-    const dragHandleTotal = panes.length * 4; // each h-1 drag handle = 4px
+    const dragHandleTotal = panes.length * 4;
     const mainHeight = Math.max(200, containerHeight - totalOscHeight - dragHandleTotal);
 
     const handleDragStart = useCallback((e, paneId) => {
@@ -347,6 +394,7 @@ const ChartContainer = ({
         window.addEventListener('mouseup', onUp);
     }, [paneHeights]);
 
+    // Sync visible time range (zoom/scroll) across all panes
     const syncTimeAxis = useCallback((range, sourceId) => {
         if (isSyncing.current || !range) return;
         isSyncing.current = true;
@@ -357,6 +405,26 @@ const ChartContainer = ({
             }
         });
         isSyncing.current = false;
+    }, []);
+
+    // Sync crosshair position across all panes
+    const syncCrosshair = useCallback((param, sourceId) => {
+        if (isSyncingCrosshair.current) return;
+        isSyncingCrosshair.current = true;
+        Object.keys(paneRefs.current).forEach(id => {
+            if (id === sourceId) return;
+            const pane = paneRefs.current[id];
+            if (!pane) return;
+            const chart = pane.getChart();
+            const series = pane.getSeries();
+            if (!chart || !series) return;
+            if (param?.time !== undefined && param?.point) {
+                chart.setCrosshairPosition(0, param.time, series);
+            } else {
+                chart.clearCrosshairPosition();
+            }
+        });
+        isSyncingCrosshair.current = false;
     }, []);
 
     return (
@@ -371,6 +439,8 @@ const ChartContainer = ({
                 height={mainHeight}
                 isLast={panes.length === 0}
                 syncTimeAxis={syncTimeAxis}
+                syncCrosshair={syncCrosshair}
+                showTimeLabel={panes.length > 0}
                 overlays={overlays}
                 drawings={drawings}
                 onAddDrawing={onAddDrawing}
@@ -382,7 +452,6 @@ const ChartContainer = ({
             {/* ── Oscillator panes ── */}
             {panes.map((pane, index) => (
                 <React.Fragment key={pane.id}>
-                    {/* Drag handle */}
                     <div
                         className="w-full h-1 bg-white/30 hover:bg-white/45 cursor-ns-resize flex-shrink-0 transition-colors"
                         onMouseDown={(e) => handleDragStart(e, pane.id)}
@@ -398,6 +467,8 @@ const ChartContainer = ({
                         height={getPaneHeight(pane.id)}
                         isLast={index === panes.length - 1}
                         syncTimeAxis={syncTimeAxis}
+                        syncCrosshair={syncCrosshair}
+                        showTimeLabel={index !== panes.length - 1}
                         overlays={pane.overlays ?? []}
                         onClose={onRemovePane ? () => onRemovePane(pane.id) : undefined}
                     />
