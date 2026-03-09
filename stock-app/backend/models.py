@@ -71,3 +71,11 @@ class SyncedAccountBalance(db.Model):
     buying_power = db.Column(db.Float)
     maintenance_excess = db.Column(db.Float)
     fetched_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class PortfolioSnapshot(db.Model):
+    """Daily snapshot of total portfolio value for historical chart persistence."""
+    __tablename__ = 'portfolio_snapshots'
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.String(10), nullable=False, unique=True)  # 'YYYY-MM-DD'
+    total_value = db.Column(db.Float, nullable=False)
+    fetched_at = db.Column(db.DateTime, default=datetime.utcnow)

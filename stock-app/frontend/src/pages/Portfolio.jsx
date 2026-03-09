@@ -24,7 +24,7 @@ const MetricCard = ({ icon: Icon, label, value, color }) => (
     </div>
 );
 
-const EditableRow = ({ holding, onDelete, onUpdate, onRowClick }) => {
+const EditableRow = ({ holding, onDelete, onUpdate, onRowClick, brokerTags = [] }) => {
     const [editing, setEditing] = useState(false);
     const [shares, setShares] = useState(holding.shares);
     const [cost, setCost] = useState(holding.avg_cost);
@@ -76,6 +76,15 @@ const EditableRow = ({ holding, onDelete, onUpdate, onRowClick }) => {
                             {holding.sector}
                         </span>
                     )}
+                    {brokerTags.map(broker => (
+                        <span
+                            key={broker}
+                            className="inline-block mt-1 ml-1 text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                            style={{ background: 'rgba(59,130,246,0.18)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)' }}
+                        >
+                            {broker}
+                        </span>
+                    ))}
                 </div>
             </td>
             <td className="py-4 px-3 text-right">
@@ -675,7 +684,6 @@ const Portfolio = () => {
     const [showAddModal, setShowAddModal] = useState(false);
     const [allocationMode, setAllocationMode] = useState('ticker');
     const [showAllRiskMetrics, setShowAllRiskMetrics] = useState(false);
-    const [syncedAccountFilter, setSyncedAccountFilter] = useState('all');
     const [selectedTicker, setSelectedTicker] = useState(null);
     const [valueHistoryTimeframe, setValueHistoryTimeframe] = useState('1y');
 
@@ -703,7 +711,29 @@ const Portfolio = () => {
         }
     }, []);
 
+    // Silent background refresh — no loading spinner, used for polling and forced updates
+    const refreshPortfolio = useCallback(async (timeframe = '1y', force = false) => {
+        try {
+            const params = { timeframe };
+            if (force) params.force = '1';
+            const res = await axios.get('/api/portfolio/analytics', { params });
+            setData(res.data);
+        } catch (e) {
+            console.error(e);
+        }
+    }, []);
+
     useEffect(() => { fetchPortfolio(valueHistoryTimeframe); }, [fetchPortfolio, valueHistoryTimeframe]);
+
+    // Poll every 60 seconds when tab is visible
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                refreshPortfolio(valueHistoryTimeframe);
+            }
+        }, 60_000);
+        return () => clearInterval(interval);
+    }, [refreshPortfolio, valueHistoryTimeframe]);
 
     const handleDelete = async (ticker) => {
         if (!window.confirm(`Remove ${ticker} from portfolio?`)) return;
@@ -719,6 +749,19 @@ const Portfolio = () => {
     const safeRisk = (risk && typeof risk === 'object') ? risk : {};
     const safeHoldings = Array.isArray(holdings) ? holdings : [];
     const safeValueHistory = Array.isArray(value_history) ? value_history : [];
+
+    // Build a map of ticker -> [broker names] from synced positions
+    const brokerByTicker = useMemo(() => {
+        const map = {};
+        for (const pos of (brokerage.positions || [])) {
+            const t = pos.ticker?.toUpperCase();
+            if (!t) continue;
+            if (!map[t]) map[t] = [];
+            const name = pos.brokerage_name;
+            if (name && !map[t].includes(name)) map[t].push(name);
+        }
+        return map;
+    }, [brokerage.positions]);
     const safeCorrelation = (correlation && typeof correlation === 'object') ? correlation : {};
 
     const isEmpty = safeHoldings.length === 0;
@@ -759,14 +802,15 @@ const Portfolio = () => {
                 const value = Number(p?.value);
                 const date = p?.date;
                 if (!Number.isFinite(value) || !date) return null;
-                return {
-                    date,
-                    shortDate: String(date).slice(5, 10),
-                    value,
-                };
+                const shortDate = valueHistoryTimeframe === '1d'
+                    ? String(date).slice(11, 16)           // "HH:MM"
+                    : valueHistoryTimeframe === '1w'
+                        ? String(date).slice(5, 16)        // "MM-DD HH:MM"
+                        : String(date).slice(5, 10);       // "MM-DD"
+                return { date, shortDate, value };
             })
             .filter(Boolean);
-    }, [safeValueHistory]);
+    }, [safeValueHistory, valueHistoryTimeframe]);
 
     const riskItems = [
         {
@@ -895,9 +939,9 @@ const Portfolio = () => {
             {/* Summary Bar */}
             {!isEmpty && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* Manual portfolio value */}
+                    {/* Portfolio total — analytics already unifies manual + synced + cash */}
                     <div className="col-span-2 glass p-5 relative overflow-hidden">
-                        <p className="text-xs uppercase font-bold tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Manual Portfolio</p>
+                        <p className="text-xs uppercase font-bold tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Total Portfolio</p>
                         <p className="text-3xl font-black mt-1" style={{ color: 'var(--text-primary)' }}>
                             ${toFinite(safeSummary.total_value)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                         </p>
@@ -912,48 +956,65 @@ const Portfolio = () => {
                             {(toFinite(safeSummary.total_gain_loss) ?? 0) >= 0 ? '+' : ''}${Math.abs(toFinite(safeSummary.total_gain_loss) ?? 0).toFixed(2)} ({asRawPercentNumber(safeSummary.total_gain_loss_pct, 2)}%) Total Return
                         </div>
 
-                        {/* Synced + combined sub-row */}
-                        {brokerage.summary && brokerage.summary.account_count > 0 && (
-                            <div className="mt-3 pt-3 space-y-1" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
-                                <div className="flex items-center justify-between text-xs">
-                                    <span style={{ color: 'var(--text-tertiary)' }}>Synced brokerages</span>
-                                    <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>
-                                        ${brokerage.summary.total_portfolio_value?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                    </span>
+                        {/* Breakdown — informational only, already included in total above */}
+                        {(() => {
+                            const totalCash = brokerage.summary?.total_cash || 0;
+                            const totalV = toFinite(safeSummary.total_value) || 0;
+                            // stocks_value from analytics (live prices); fall back to total - cash
+                            const stocksV = toFinite(safeSummary.stocks_value) ?? Math.max(0, totalV - totalCash);
+                            if (totalCash <= 0 && stocksV <= 0) return null;
+                            return (
+                                <div className="mt-3 pt-3 space-y-1" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span style={{ color: 'var(--text-tertiary)' }}>Positions value</span>
+                                        <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>
+                                            ${stocksV.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                    {totalCash > 0 && (
+                                        <div className="flex items-center justify-between text-xs">
+                                            <span style={{ color: 'var(--text-tertiary)' }}>Cash (dry powder)</span>
+                                            <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>
+                                                ${totalCash.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className="font-bold" style={{ color: 'var(--text-tertiary)' }}>Combined total</span>
-                                    <span className="font-black" style={{ color: 'var(--accent)' }}>
-                                        ${((toFinite(safeSummary.total_value) || 0) + (brokerage.summary.total_portfolio_value || 0)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                    </span>
-                                </div>
-                            </div>
-                        )}
+                            );
+                        })()}
                     </div>
                     <MetricCard icon={Target} label="Beta" value={asNumber(displayRisk.beta)} color="bg-blue-500/10 text-blue-400" />
                     <MetricCard icon={Shield} label="Sharpe Ratio" value={asNumber(displayRisk.sharpe_ratio)} color="bg-emerald-500/10 text-emerald-400" />
                 </div>
             )}
 
-            {!isEmpty && valueHistoryChartData.length > 1 && (
+            {!isEmpty && valueHistoryChartData.length > 0 && (
                 <div className="glass p-5">
                     <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
                         <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
                             Portfolio Value Over Time
                         </h3>
                         <div className="flex items-center gap-2">
-                            {['3mo', '6mo', '1y', '2y'].map(tf => (
+                            {[
+                                { key: '1d', label: '1D' },
+                                { key: '1w', label: '1W' },
+                                { key: '1m', label: '1M' },
+                                { key: '3mo', label: '3M' },
+                                { key: '6mo', label: '6M' },
+                                { key: '1y', label: '1Y' },
+                                { key: '2y', label: '2Y' },
+                            ].map(({ key, label }) => (
                                 <button
-                                    key={tf}
-                                    onClick={() => setValueHistoryTimeframe(tf)}
+                                    key={key}
+                                    onClick={() => setValueHistoryTimeframe(key)}
                                     className="text-xs font-bold px-3 py-1.5 rounded-lg transition-all"
                                     style={{
-                                        background: valueHistoryTimeframe === tf ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
-                                        color: valueHistoryTimeframe === tf ? '#000' : 'var(--text-secondary)',
-                                        border: valueHistoryTimeframe === tf ? 'none' : '1px solid rgba(255,255,255,0.12)'
+                                        background: valueHistoryTimeframe === key ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
+                                        color: valueHistoryTimeframe === key ? '#000' : 'var(--text-secondary)',
+                                        border: valueHistoryTimeframe === key ? 'none' : '1px solid rgba(255,255,255,0.12)'
                                     }}
                                 >
-                                    {tf === '3mo' ? '3M' : tf === '6mo' ? '6M' : tf === '1y' ? '1Y' : '2Y'}
+                                    {label}
                                 </button>
                             ))}
                         </div>
@@ -968,6 +1029,7 @@ const Portfolio = () => {
                                     axisLine={false}
                                     tickLine={false}
                                     width={84}
+                                    domain={['auto', 'auto']}
                                     tickFormatter={(v) => `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                                 />
                                 <RechartsTooltip
@@ -1001,7 +1063,7 @@ const Portfolio = () => {
                         <Zap className="h-16 w-16 mb-6" style={{ color: 'rgba(255,255,255,0.15)' }} />
                         <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-secondary)' }}>Portfolio is empty</h2>
                         <p className="mb-8 text-sm text-center max-w-sm" style={{ color: 'var(--text-tertiary)' }}>
-                            Start by adding your first stock position to track your investments and see risk analytics.
+                            Connect a brokerage account or add a position manually to track your investments.
                         </p>
                         <button
                             onClick={() => setShowAddModal(true)}
@@ -1028,6 +1090,50 @@ const Portfolio = () => {
                 </div>
             ) : (
                 <>
+                    {/* Holdings Table */}
+                    <div className="glass overflow-hidden" style={{ padding: 0 }}>
+                        <div
+                            className="px-5 py-4 flex items-center justify-between"
+                            style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+                        >
+                            <h3 className="text-sm font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Holdings</h3>
+                            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                                {safeHoldings.length} position{safeHoldings.length !== 1 ? 's' : ''}
+                            </span>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr
+                                        className="text-[10px] uppercase font-bold tracking-widest"
+                                        style={{ color: 'var(--text-tertiary)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+                                    >
+                                        <th className="py-3 px-3 text-left">Ticker</th>
+                                        <th className="py-3 px-3 text-right">Shares</th>
+                                        <th className="py-3 px-3 text-right">Avg Cost</th>
+                                        <th className="py-3 px-3 text-right">Current</th>
+                                        <th className="py-3 px-3 text-right">Value</th>
+                                        <th className="py-3 px-3 text-right">Gain/Loss</th>
+                                        <th className="py-3 px-3 text-right">Weight</th>
+                                        <th className="py-3 px-3"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {safeHoldings.map(h => (
+                                        <EditableRow
+                                            key={h.ticker}
+                                            holding={h}
+                                            onDelete={handleDelete}
+                                            onUpdate={handleUpdate}
+                                            onRowClick={setSelectedTicker}
+                                            brokerTags={brokerByTicker[h.ticker] || []}
+                                        />
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     {/* Allocation + Risk */}
                     <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                         <div className="glass p-5 lg:col-span-2">
@@ -1115,49 +1221,6 @@ const Portfolio = () => {
                         </div>
                     </div>
 
-                    {/* Holdings Table */}
-                    <div className="glass overflow-hidden" style={{ padding: 0 }}>
-                        <div
-                            className="px-5 py-4 flex items-center justify-between"
-                            style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
-                        >
-                            <h3 className="text-sm font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Holdings</h3>
-                            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                                {safeHoldings.length} position{safeHoldings.length !== 1 ? 's' : ''}
-                            </span>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
-                                <thead>
-                                    <tr
-                                        className="text-[10px] uppercase font-bold tracking-widest"
-                                        style={{ color: 'var(--text-tertiary)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
-                                    >
-                                        <th className="py-3 px-3 text-left">Ticker</th>
-                                        <th className="py-3 px-3 text-right">Shares</th>
-                                        <th className="py-3 px-3 text-right">Avg Cost</th>
-                                        <th className="py-3 px-3 text-right">Current</th>
-                                        <th className="py-3 px-3 text-right">Value</th>
-                                        <th className="py-3 px-3 text-right">Gain/Loss</th>
-                                        <th className="py-3 px-3 text-right">Weight</th>
-                                        <th className="py-3 px-3"></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {safeHoldings.map(h => (
-                                        <EditableRow
-                                            key={h.ticker}
-                                            holding={h}
-                                            onDelete={handleDelete}
-                                            onUpdate={handleUpdate}
-                                            onRowClick={setSelectedTicker}
-                                        />
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
                     {/* Connected Accounts */}
                     <BrokerageManager
                         accounts={brokerage.accounts}
@@ -1173,79 +1236,6 @@ const Portfolio = () => {
                         getConnectUrl={brokerage.getConnectUrl}
                     />
 
-                    {/* Synced Holdings */}
-                    <SyncedHoldingsSection
-                        accounts={brokerage.accounts}
-                        positions={brokerage.positions}
-                        accountFilter={syncedAccountFilter}
-                        onFilterChange={setSyncedAccountFilter}
-                        onRowClick={setSelectedTicker}
-                    />
-
-                    {/* Correlation Heatmap */}
-                    {safeHoldings.length >= 2 && Object.keys(safeCorrelation).length > 0 && (
-                        <div className="glass p-5">
-                            <div className="flex items-center justify-between mb-5">
-                                <h3 className="text-sm font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
-                                    Correlation Matrix
-                                </h3>
-                                <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>1-Year Daily Returns</span>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="text-xs mx-auto">
-                                    <thead>
-                                        <tr>
-                                            <th className="p-2 w-16"></th>
-                                            {safeHoldings.map(h => (
-                                                <th key={h.ticker} className="p-2 font-black uppercase w-16 text-center" style={{ color: 'var(--text-secondary)' }}>
-                                                    {h.ticker}
-                                                </th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {safeHoldings.map(h1 => (
-                                            <tr key={h1.ticker}>
-                                                <td className="p-2 font-black uppercase text-right pr-3" style={{ color: 'var(--text-secondary)' }}>
-                                                    {h1.ticker}
-                                                </td>
-                                                {safeHoldings.map(h2 => {
-                                                    const val = Number(safeCorrelation?.[h1.ticker]?.[h2.ticker] ?? 0);
-                                                    const isIdentity = h1.ticker === h2.ticker;
-                                                    let bg = 'rgba(255,255,255,0.06)';
-                                                    let textColor = 'var(--text-tertiary)';
-                                                    if (isIdentity) {
-                                                        bg = 'rgba(255,255,255,0.10)'; textColor = 'var(--text-secondary)';
-                                                    } else if (val > 0.7) {
-                                                        bg = 'rgba(48,209,88,0.28)'; textColor = '#a8f5be';
-                                                    } else if (val > 0.3) {
-                                                        bg = 'rgba(48,209,88,0.14)'; textColor = 'var(--positive)';
-                                                    } else if (val < -0.3) {
-                                                        bg = 'rgba(255,69,58,0.24)'; textColor = '#ffa5a0';
-                                                    } else if (val < -0.1) {
-                                                        bg = 'rgba(255,69,58,0.11)'; textColor = 'var(--negative)';
-                                                    }
-                                                    return (
-                                                        <td key={h2.ticker} className="p-1">
-                                                            <div
-                                                                className="w-14 h-10 flex items-center justify-center rounded-md"
-                                                                style={{ background: bg }}
-                                                            >
-                                                                <span className="font-bold" style={{ color: textColor }}>{val.toFixed(2)}</span>
-                                                            </div>
-                                                        </td>
-                                                    );
-                                                })}
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                            <p className="text-xs mt-4 text-center" style={{ color: 'var(--text-tertiary)' }}>
-                                🟢 High positive correlation · ⬜ Low correlation · 🔴 Negative correlation
-                            </p>
-                        </div>
-                    )}
                 </>
             )}
 
@@ -1254,7 +1244,13 @@ const Portfolio = () => {
             )}
 
             {selectedTicker && (
-                <StockIndicatorsModal ticker={selectedTicker} onClose={() => setSelectedTicker(null)} />
+                <StockIndicatorsModal
+                    ticker={selectedTicker}
+                    onClose={() => {
+                        setSelectedTicker(null);
+                        refreshPortfolio(valueHistoryTimeframe, true);
+                    }}
+                />
             )}
         </div>
         </>

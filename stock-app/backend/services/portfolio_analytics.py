@@ -10,7 +10,7 @@ class PortfolioAnalytics:
         self.positions = positions
         self.fetcher = DataFetcher()
 
-    def get_all_metrics(self, timeframe='1y'):
+    def get_all_metrics(self, timeframe='1y', interval='1d', total_cash=0.0, start_date=None, snapshots=None):
         if not self.positions:
             return {
                 'summary': {
@@ -25,16 +25,43 @@ class PortfolioAnalytics:
             }
 
         tickers = [p['ticker'] for p in self.positions]
-        returns_map = self._build_returns_map(tickers + ['SPY'], period=timeframe)
 
-        basic = self.get_basic_metrics(returns_map=returns_map)
-        risk = self.get_risk_metrics(basic['holdings'], returns_map=returns_map)
-        correlation = self.get_correlation_matrix(returns_map=returns_map)
-        value_history = self.get_value_history(basic['holdings'], returns_map=returns_map, timeframe=timeframe)
+        # Risk/correlation always use daily data; use at least 1y for meaningful metrics.
+        risk_period = timeframe if interval == '1d' else '1y'
+        returns_map_daily = self._build_returns_map(tickers + ['SPY'], period=risk_period, interval='1d')
 
+        basic = self.get_basic_metrics(returns_map=returns_map_daily)
+        risk = self.get_risk_metrics(basic['holdings'], returns_map=returns_map_daily)
+        correlation = self.get_correlation_matrix(returns_map=returns_map_daily)
+
+        # Value history uses the selected interval (intraday for 1d/1w views).
+        returns_map_hist = (
+            self._build_returns_map(tickers, period=timeframe, interval=interval)
+            if interval != '1d'
+            else returns_map_daily
+        )
+        # Pre-buy flat line = cash held before any positions were opened.
+        # That equals today's cash + the cost basis of all current positions
+        # (i.e. the full amount the user had before deploying into stocks).
+        total_cost = sum(h.get('avg_cost', 0) * h.get('shares', 0) for h in basic['holdings'])
+        pre_buy_cash = total_cash + total_cost
+
+        value_history = self.get_value_history(
+            basic['holdings'],
+            returns_map=returns_map_hist,
+            timeframe=timeframe,
+            interval=interval,
+            total_cash=total_cash,
+            pre_buy_cash=pre_buy_cash,
+            start_date=start_date,
+            snapshots=snapshots,
+        )
+
+        stocks_value = basic['total_value']
         return {
             'summary': {
-                'total_value': basic['total_value'],
+                'total_value': stocks_value + total_cash,
+                'stocks_value': stocks_value,
                 'total_gain_loss': basic['total_gain_loss'],
                 'total_gain_loss_pct': basic['total_gain_loss_pct'],
             },
@@ -65,15 +92,35 @@ class PortfolioAnalytics:
 
         return returns_map
 
-    def get_value_history(self, holdings, returns_map=None, timeframe='1y'):
+    def get_value_history(self, holdings, returns_map=None, timeframe='1y', interval='1d',
+                          total_cash=0.0, pre_buy_cash=None, start_date=None, snapshots=None):
+        """
+        Build portfolio value history series.
+
+        - Dates before start_date: flat line at pre_buy_cash (cash held before any position
+          was opened = remaining_cash + cost_basis_of_all_positions).
+        - Dates on/after start_date: computed from weighted returns, anchored to current value.
+        - Where a stored snapshot exists for a date, it overrides the computed value for
+          historical accuracy (survives portfolio composition changes, e.g. selling/rebuying).
+
+        snapshots: dict of {date_str: total_value} from PortfolioSnapshot DB rows.
+        pre_buy_cash: value to show as flat line before start_date. Defaults to total_cash.
+        """
+        snapshots = snapshots or {}
+        start_str = start_date.strftime('%Y-%m-%d') if start_date else None
+        flat_line_value = pre_buy_cash if pre_buy_cash is not None else total_cash
+
         if not holdings:
+            # No positions at all — if we have snapshots, return those; else empty.
+            if snapshots:
+                return [{'date': d, 'value': v} for d, v in sorted(snapshots.items())]
             return []
 
         returns_map = returns_map or self._build_returns_map([h['ticker'] for h in holdings], period=timeframe)
         weights = {h['ticker']: h['weight'] for h in holdings}
-        current_total_value = float(sum(h.get('value', 0) for h in holdings))
+        stock_total = float(sum(h.get('value', 0) for h in holdings))
 
-        if current_total_value <= 0:
+        if stock_total <= 0:
             return []
 
         returns_df = pd.DataFrame({
@@ -95,15 +142,32 @@ class PortfolioAnalytics:
         if growth.empty or float(growth.iloc[-1]) == 0:
             return []
 
-        # Anchor the series to today's computed total portfolio value.
-        scale = current_total_value / float(growth.iloc[-1])
-        values = growth * scale
+        # Anchor stock portion to today's stock value, then add cash as a flat offset.
+        scale = stock_total / float(growth.iloc[-1])
+        values = growth * scale + total_cash
 
+        intraday = interval not in ('1d', '1wk', '1mo')
+        seen = set()
         series = []
         for dt, value in values.items():
             if pd.isna(value):
                 continue
-            series.append({'date': str(dt), 'value': float(value)})
+            # For intraday intervals preserve HH:MM precision; daily uses date only.
+            dt_str = str(dt)[:16] if intraday else str(dt)[:10]
+            if dt_str in seen:
+                continue
+            seen.add(dt_str)
+            date_str = dt_str[:10]  # always the date portion for snapshot/start comparisons
+
+            # Stored snapshot takes priority (true historical accuracy).
+            if date_str in snapshots:
+                series.append({'date': dt_str, 'value': float(snapshots[date_str])})
+            elif start_str and date_str < start_str:
+                # Before any position was opened — show pre-buy cash as flat line.
+                series.append({'date': dt_str, 'value': float(flat_line_value)})
+            else:
+                series.append({'date': dt_str, 'value': float(value)})
+
         return series
 
     def get_basic_metrics(self, returns_map=None):

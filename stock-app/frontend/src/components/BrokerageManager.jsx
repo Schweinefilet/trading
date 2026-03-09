@@ -442,6 +442,13 @@ export default function BrokerageManager({
 
     const isEmpty = accounts.length === 0;
 
+    // Only show accounts that have money or positions; hide empty/unfunded accounts.
+    const visibleAccounts = accounts.filter(acct => {
+        const val = valByAccount[acct.account_id] ?? 0;
+        const pos = posByAccount[acct.account_id] ?? 0;
+        return val > 0 || pos > 0;
+    });
+
     return (
         <div className="glass overflow-hidden" style={{ padding: 0 }}>
             {/* Header */}
@@ -455,7 +462,7 @@ export default function BrokerageManager({
                     </h3>
                     {!isEmpty && (
                         <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-                            {accounts.length} broker{accounts.length !== 1 ? 's' : ''} · auto-sync every 15 min
+                            {visibleAccounts.length} broker{visibleAccounts.length !== 1 ? 's' : ''} · auto-sync every 15 min
                         </p>
                     )}
                 </div>
@@ -488,7 +495,7 @@ export default function BrokerageManager({
                 </div>
             ) : (
                 <>
-                    {accounts.map(acct => (
+                    {visibleAccounts.map(acct => (
                         <AccountCard
                             key={acct.account_id}
                             account={acct}

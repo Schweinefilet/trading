@@ -8,10 +8,17 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 from models import db, SnapTradeUser, BrokerageAccount, SyncedPosition, SyncedAccountBalance
+from services.cache import CacheService
 
 logger = logging.getLogger(__name__)
 
 brokerage_bp = Blueprint("brokerage", __name__)
+
+
+def _bust_analytics_cache():
+    for tf in ['1d', '1w', '1m', '3mo', '6mo', '1y', '2y']:
+        CacheService.delete('__portfolio__', 'portfolio_analytics', f'v1_{tf}')
+
 
 # ---------------------------------------------------------------------------
 # Guard helper
@@ -82,12 +89,30 @@ def register():
                     "already_registered": True,
                     "snaptrade_user_id": re_check.snaptrade_user_id,
                 })
-            # User exists in SnapTrade but we lost the secret — unrecoverable
-            # without manual intervention.
+            # User exists in SnapTrade but we lost the secret — auto-recover
+            # by deleting the stale SnapTrade user and re-registering.
+            from services.snaptrade_service import delete_snaptrade_user
+            try:
+                delete_snaptrade_user(local_user_id)
+                logger.info("Deleted stale SnapTrade user '%s', re-registering...", local_user_id)
+            except Exception as del_err:
+                logger.warning("Could not delete stale SnapTrade user: %s — attempting re-register anyway", del_err)
+            try:
+                result = register_snaptrade_user(local_user_id)
+            except Exception as rereg_err:
+                logger.error("Re-registration failed: %s", rereg_err)
+                return jsonify({"error": str(rereg_err)}), 500
+            new_user = SnapTradeUser(
+                user_id=local_user_id,
+                snaptrade_user_id=result["snaptrade_user_id"],
+                user_secret=encrypt_secret(result["user_secret"]),
+            )
+            db.session.add(new_user)
+            db.session.commit()
             return jsonify({
-                "error": "user_exists_in_snaptrade",
-                "detail": "The SnapTrade user already exists but no local credentials were found. Delete the user from the SnapTrade dashboard and retry.",
-            }), 409
+                "already_registered": False,
+                "snaptrade_user_id": result["snaptrade_user_id"],
+            })
 
         if _code == 401:
             return jsonify({"error": "snaptrade_auth_expired"}), 401
@@ -169,6 +194,7 @@ def sync_all():
         return jsonify({"error": str(e)}), 500
 
     result["synced_at"] = _fmt_dt(datetime.utcnow())
+    _bust_analytics_cache()
     return jsonify(result)
 
 
@@ -197,6 +223,7 @@ def sync_account(account_id):
         return jsonify({"error": str(e)}), 500
 
     result["synced_at"] = _fmt_dt(datetime.utcnow())
+    _bust_analytics_cache()
     return jsonify(result)
 
 

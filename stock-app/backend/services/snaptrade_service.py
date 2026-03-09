@@ -91,6 +91,13 @@ def _to_float(v) -> "float | None":
 # User registration
 # ---------------------------------------------------------------------------
 
+def delete_snaptrade_user(user_id: str) -> bool:
+    """Delete a SnapTrade user (used to recover from stale registrations)."""
+    client = _get_client()
+    client.authentication.delete_snap_trade_user(user_id=user_id)
+    return True
+
+
 def register_snaptrade_user(user_id: str) -> dict:
     """
     Register a new user with SnapTrade (v11 SDK).

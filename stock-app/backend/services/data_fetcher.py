@@ -131,8 +131,9 @@ class DataFetcher:
 
     def get_history(self, ticker, period='1y', interval='1d'):
         intraday = interval not in ('1d', '1wk', '1mo')
+        cache_type = 'history_intraday' if intraday else 'history'
         key_params = f"period={period}&interval={interval}" + ("&prepost=1" if intraday else "")
-        data = CacheService.get(ticker, 'history', key_params)
+        data = CacheService.get(ticker, cache_type, key_params)
         if data:
             return data
 
@@ -156,7 +157,7 @@ class DataFetcher:
                     res['Date'] = res['Date'].dt.strftime('%Y-%m-%d %H:%M')
 
                 data_list = res.to_dict(orient='records')
-                CacheService.set(ticker, 'history', data_list, key_params)
+                CacheService.set(ticker, cache_type, data_list, key_params)
                 return data_list
             except Exception as e:
                 msg = str(e).lower()

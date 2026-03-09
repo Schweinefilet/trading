@@ -134,9 +134,9 @@ const MarketIndicesChart = () => {
                 });
                 
                 const formatted = response.data.map(item => ({
-                    date: item.date,
-                    shortDate: String(item.date).slice(5, 10),
-                    close: item.close,
+                    date: item.Date,
+                    shortDate: String(item.Date).slice(5, 10),
+                    close: item.Close,
                 })).filter(d => d.close != null);
                 
                 setChartData(formatted);
@@ -588,7 +588,7 @@ const Dashboard = () => {
         return result;
     });
 
-    const [activeTab, setActiveTab] = useState('main');
+    const [activeTab, setActiveTab] = useState('portfolio');
     const [showCustomize, setShowCustomize] = useState(false);
     const [sortBy, setSortBy] = useState('pct_desc');
     const [quotesMap, setQuotesMap] = useState({});
@@ -596,6 +596,8 @@ const Dashboard = () => {
     const [miniChartsMap, setMiniChartsMap] = useState({});
     const [loadingMap, setLoadingMap] = useState({});
     const pendingRef = useRef(new Set());
+    const fetchedVersionRef = useRef({});  // ticker -> pollTick at last fetch
+    const [pollTick, setPollTick] = useState(0);
 
     const portfolioTabTickers = useMemo(() => {
         const holdings = Array.isArray(portfolio?.holdings) ? portfolio.holdings : [];
@@ -614,6 +616,18 @@ const Dashboard = () => {
         })
             .then(r => setPortfolio(r.data))
             .catch(() => {});
+    }, [portfolioTimeframe]);
+
+    // Poll portfolio + quotes every 60 seconds
+    useEffect(() => {
+        const id = setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
+            axios.get('/api/portfolio/analytics', { params: { timeframe: portfolioTimeframe } })
+                .then(r => setPortfolio(r.data))
+                .catch(() => {});
+            setPollTick(t => t + 1);
+        }, 60_000);
+        return () => clearInterval(id);
     }, [portfolioTimeframe]);
 
     useEffect(() => {
@@ -638,9 +652,10 @@ const Dashboard = () => {
         });
 
         const toFetch = ordered.filter((ticker) => {
-            const needsQuote = !quotesMap[ticker];
-            const needsIndicators = !indicatorsMap[ticker];
-            return (needsQuote || needsIndicators) && !pendingRef.current.has(ticker);
+            if (pendingRef.current.has(ticker)) return false;
+            const fetchedAt = fetchedVersionRef.current[ticker] ?? -1;
+            // Re-fetch on poll tick change OR if never fetched OR if indicators missing
+            return fetchedAt < pollTick || !indicatorsMap[ticker];
         });
 
         if (toFetch.length === 0) return;
@@ -662,6 +677,7 @@ const Dashboard = () => {
                         axios.get(`/api/stock/${enc}/quote`),
                         axios.get(`/api/stock/${enc}/indicators?period=3mo&interval=1d&indicators=rsi,macd`),
                     ]);
+                    fetchedVersionRef.current[ticker] = pollTick;
                     setQuotesMap(prev => ({ ...prev, [ticker]: quoteRes.data }));
                     setIndicatorsMap(prev => ({ ...prev, [ticker]: Array.isArray(indRes.data) ? indRes.data : [] }));
                 } catch {
@@ -675,7 +691,7 @@ const Dashboard = () => {
 
         const workers = Array.from({ length: Math.min(CONCURRENCY, toFetch.length) }, () => worker());
         Promise.all(workers).catch(() => {});
-    }, [watchlist, activeTab, quotesMap, indicatorsMap]);
+    }, [watchlist, activeTab, quotesMap, indicatorsMap, pollTick]);
 
     const saveWatchlist = useCallback((newList) => {
         if (activeTab === 'portfolio') return;
@@ -775,14 +791,15 @@ const Dashboard = () => {
                 const value = Number(p?.value);
                 const date = p?.date;
                 if (!Number.isFinite(value) || !date) return null;
-                return {
-                    date,
-                    shortDate: String(date).slice(5, 10),
-                    value,
-                };
+                const shortDate = portfolioTimeframe === '1d'
+                    ? String(date).slice(11, 16)
+                    : portfolioTimeframe === '1w'
+                        ? String(date).slice(5, 16)
+                        : String(date).slice(5, 10);
+                return { date, shortDate, value };
             })
             .filter(Boolean);
-    }, [portfolio]);
+    }, [portfolio, portfolioTimeframe]);
 
     return (
         <>
@@ -828,18 +845,26 @@ const Dashboard = () => {
                                 <div className="flex items-center justify-between mt-5 mb-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
                                     <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Value History</span>
                                     <div className="flex items-center gap-1.5">
-                                        {['3mo', '6mo', '1y', '2y'].map(tf => (
+                                        {[
+                                            { key: '1d', label: '1D' },
+                                            { key: '1w', label: '1W' },
+                                            { key: '1m', label: '1M' },
+                                            { key: '3mo', label: '3M' },
+                                            { key: '6mo', label: '6M' },
+                                            { key: '1y', label: '1Y' },
+                                            { key: '2y', label: '2Y' },
+                                        ].map(({ key, label }) => (
                                             <button
-                                                key={tf}
-                                                onClick={() => setPortfolioTimeframe(tf)}
+                                                key={key}
+                                                onClick={() => setPortfolioTimeframe(key)}
                                                 className="text-xs font-bold px-2.5 py-1 rounded-lg transition-all"
                                                 style={{
-                                                    background: portfolioTimeframe === tf ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
-                                                    color: portfolioTimeframe === tf ? '#000' : 'var(--text-secondary)',
-                                                    border: portfolioTimeframe === tf ? 'none' : '1px solid rgba(255,255,255,0.12)'
+                                                    background: portfolioTimeframe === key ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
+                                                    color: portfolioTimeframe === key ? '#000' : 'var(--text-secondary)',
+                                                    border: portfolioTimeframe === key ? 'none' : '1px solid rgba(255,255,255,0.12)'
                                                 }}
                                             >
-                                                {tf === '3mo' ? '3M' : tf === '6mo' ? '6M' : tf === '1y' ? '1Y' : '2Y'}
+                                                {label}
                                             </button>
                                         ))}
                                     </div>
@@ -853,6 +878,7 @@ const Dashboard = () => {
                                             axisLine={false}
                                             tickLine={false}
                                             width={80}
+                                            domain={['auto', 'auto']}
                                             tickFormatter={(v) => `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                                         />
                                         <RechartsTooltip

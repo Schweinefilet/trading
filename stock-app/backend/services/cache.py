@@ -23,11 +23,12 @@ class CacheService:
             return None
             
         ttls = {
-            'quote': timedelta(minutes=15),
+            'quote': timedelta(seconds=60),
             'analyst': timedelta(minutes=15),
             'fundamentals': timedelta(hours=24),
             'financials': timedelta(days=7),
             'history': timedelta(hours=1),
+            'history_intraday': timedelta(seconds=60),
             'correlation': timedelta(hours=24),
             'portfolio_analytics': timedelta(seconds=60),
         }

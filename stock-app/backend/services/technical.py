@@ -20,6 +20,10 @@ class TechnicalService:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
+        # Drop rows with no close price (pre/post market bars can have NaN Close)
+        if 'Close' in df.columns:
+            df = df.dropna(subset=['Close']).reset_index(drop=True)
+
         # TREND
         if 'sma' in requested_indicators:
             for length in [9, 20, 50, 100, 200]:
