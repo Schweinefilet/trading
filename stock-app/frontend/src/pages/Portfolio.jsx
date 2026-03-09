@@ -1,22 +1,25 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import {
     PieChart, Pie, Cell, ResponsiveContainer,
     Tooltip as RechartsTooltip, LineChart, Line,
     XAxis, YAxis, CartesianGrid, Area, AreaChart
 } from 'recharts';
-import { TrendingUp, TrendingDown, Target, Shield, Activity, AlertTriangle, Trash2, Pencil, Check, X, Plus, Zap } from 'lucide-react';
+import { TrendingUp, TrendingDown, Target, Shield, Trash2, Pencil, Check, X, Plus, Zap, ChevronDown, ChevronUp, RefreshCw, Wifi } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import ParticlesBg from '../components/ParticlesBg';
+import BrokerageManager from '../components/BrokerageManager';
+import { useBrokerageSync } from '../hooks/useBrokerageSync';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
 
 const MetricCard = ({ icon: Icon, label, value, color }) => (
-    <div className="bg-slate-800/60 rounded-xl p-5 flex flex-col items-center text-center group hover:bg-slate-800 transition-colors border border-slate-700/50">
+    <div className="glass p-5 flex flex-col items-center text-center">
         <div className={`w-11 h-11 rounded-full flex items-center justify-center mb-3 ${color}`}>
             <Icon className="h-5 w-5" />
         </div>
-        <p className="text-2xl font-black text-white tabular-nums">{value}</p>
-        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mt-1">{label}</p>
+        <p className="text-2xl font-black tabular-nums" style={{ color: 'var(--text-primary)' }}>{value}</p>
+        <p className="text-[10px] uppercase font-bold tracking-widest mt-1" style={{ color: 'var(--text-tertiary)' }}>{label}</p>
     </div>
 );
 
@@ -24,6 +27,7 @@ const EditableRow = ({ holding, onDelete, onUpdate }) => {
     const [editing, setEditing] = useState(false);
     const [shares, setShares] = useState(holding.shares);
     const [cost, setCost] = useState(holding.avg_cost);
+    const [hovered, setHovered] = useState(false);
 
     const handleSave = async () => {
         await onUpdate(holding.ticker, parseFloat(shares), parseFloat(cost));
@@ -33,11 +37,36 @@ const EditableRow = ({ holding, onDelete, onUpdate }) => {
     const isPositive = holding.gain_loss >= 0;
 
     return (
-        <tr className="hover:bg-slate-800/50 transition-colors border-b border-slate-800/80">
+        <tr
+            className="transition-colors"
+            style={{
+                borderBottom: '1px solid rgba(255,255,255,0.07)',
+                background: hovered ? 'rgba(255,255,255,0.05)' : 'transparent',
+            }}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
             <td className="py-4 px-3">
-                <Link to={`/stock/${holding.ticker}`} className="font-bold text-blue-400 hover:text-blue-300 transition-colors">
+                <Link
+                    to={`/stock/${holding.ticker}`}
+                    className="font-bold transition-colors hover:opacity-80"
+                    style={{ color: 'var(--accent)' }}
+                >
                     {holding.ticker}
                 </Link>
+                <div className="mt-0.5">
+                    <p className="text-[11px] truncate" style={{ color: 'var(--text-tertiary)', maxWidth: '220px' }}>
+                        {holding.long_name || holding.ticker}
+                    </p>
+                    {holding.sector && (
+                        <span
+                            className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}
+                        >
+                            {holding.sector}
+                        </span>
+                    )}
+                </div>
             </td>
             <td className="py-4 px-3 text-right">
                 {editing ? (
@@ -45,10 +74,11 @@ const EditableRow = ({ holding, onDelete, onUpdate }) => {
                         type="number"
                         value={shares}
                         onChange={e => setShares(e.target.value)}
-                        className="w-24 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-white text-right text-sm"
+                        className="w-24 rounded-lg px-2 py-1 text-white text-right text-sm outline-none"
+                        style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)' }}
                     />
                 ) : (
-                    <span className="text-slate-300">{holding.shares}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{holding.shares}</span>
                 )}
             </td>
             <td className="py-4 px-3 text-right">
@@ -57,17 +87,20 @@ const EditableRow = ({ holding, onDelete, onUpdate }) => {
                         type="number"
                         value={cost}
                         onChange={e => setCost(e.target.value)}
-                        className="w-24 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-white text-right text-sm"
+                        className="w-24 rounded-lg px-2 py-1 text-white text-right text-sm outline-none"
+                        style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)' }}
                     />
                 ) : (
-                    <span className="text-slate-300">${holding.avg_cost.toFixed(2)}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>${holding.avg_cost.toFixed(2)}</span>
                 )}
             </td>
-            <td className="py-4 px-3 text-right font-medium text-white">${holding.current_price.toFixed(2)}</td>
-            <td className="py-4 px-3 text-right font-bold text-white">
+            <td className="py-4 px-3 text-right font-medium" style={{ color: 'var(--text-primary)' }}>
+                ${holding.current_price.toFixed(2)}
+            </td>
+            <td className="py-4 px-3 text-right font-bold" style={{ color: 'var(--text-primary)' }}>
                 ${holding.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
             </td>
-            <td className={`py-4 px-3 text-right font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+            <td className="py-4 px-3 text-right font-bold" style={{ color: isPositive ? 'var(--positive)' : 'var(--negative)' }}>
                 <div className="flex flex-col items-end">
                     <span>{isPositive ? '+' : ''}{holding.gain_loss.toFixed(2)}</span>
                     <span className="text-xs opacity-75">{isPositive ? '+' : ''}{holding.gain_loss_pct.toFixed(2)}%</span>
@@ -75,9 +108,9 @@ const EditableRow = ({ holding, onDelete, onUpdate }) => {
             </td>
             <td className="py-4 px-3 text-right">
                 <div className="flex flex-col items-end">
-                    <span className="text-slate-400 text-sm">{(holding.weight * 100).toFixed(1)}%</span>
-                    <div className="w-16 h-1 bg-slate-700 rounded mt-1">
-                        <div className="h-1 bg-blue-500 rounded" style={{ width: `${holding.weight * 100}%` }} />
+                    <span className="text-sm" style={{ color: 'var(--text-tertiary)' }}>{(holding.weight * 100).toFixed(1)}%</span>
+                    <div className="w-16 h-1 rounded mt-1" style={{ background: 'rgba(255,255,255,0.10)' }}>
+                        <div className="h-1 rounded" style={{ width: `${holding.weight * 100}%`, background: 'var(--accent)' }} />
                     </div>
                 </div>
             </td>
@@ -85,13 +118,33 @@ const EditableRow = ({ holding, onDelete, onUpdate }) => {
                 <div className="flex items-center justify-end space-x-1">
                     {editing ? (
                         <>
-                            <button onClick={handleSave} className="p-1 text-emerald-400 hover:text-emerald-300 transition-colors"><Check className="h-4 w-4" /></button>
-                            <button onClick={() => setEditing(false)} className="p-1 text-slate-500 hover:text-slate-300 transition-colors"><X className="h-4 w-4" /></button>
+                            <button onClick={handleSave} className="p-1 transition-colors" style={{ color: 'var(--positive)' }}>
+                                <Check className="h-4 w-4" />
+                            </button>
+                            <button onClick={() => setEditing(false)} className="p-1 transition-colors" style={{ color: 'var(--text-tertiary)' }}>
+                                <X className="h-4 w-4" />
+                            </button>
                         </>
                     ) : (
                         <>
-                            <button onClick={() => setEditing(true)} className="p-1 text-slate-600 hover:text-slate-300 transition-colors"><Pencil className="h-4 w-4" /></button>
-                            <button onClick={() => onDelete(holding.ticker)} className="p-1 text-slate-600 hover:text-rose-500 transition-colors"><Trash2 className="h-4 w-4" /></button>
+                            <button
+                                onClick={() => setEditing(true)}
+                                className="p-1 transition-colors"
+                                style={{ color: 'var(--text-tertiary)' }}
+                                onMouseEnter={e => e.currentTarget.style.color = 'var(--text-primary)'}
+                                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-tertiary)'}
+                            >
+                                <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                                onClick={() => onDelete(holding.ticker)}
+                                className="p-1 transition-colors"
+                                style={{ color: 'var(--text-tertiary)' }}
+                                onMouseEnter={e => e.currentTarget.style.color = 'var(--negative)'}
+                                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-tertiary)'}
+                            >
+                                <Trash2 className="h-4 w-4" />
+                            </button>
                         </>
                     )}
                 </div>
@@ -127,50 +180,78 @@ const AddPositionModal = ({ onClose, onAdded }) => {
     };
 
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <div
+            className="fixed inset-0 flex items-center justify-center z-50 p-4"
+            style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+        >
+            <div className="glass w-full max-w-sm p-6" style={{ borderRadius: '20px' }}>
                 <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-xl font-bold">Add Position</h3>
-                    <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X className="h-5 w-5" /></button>
+                    <h3 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Add Position</h3>
+                    <button
+                        onClick={onClose}
+                        className="transition-colors"
+                        style={{ color: 'var(--text-tertiary)' }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--text-primary)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--text-tertiary)'}
+                    >
+                        <X className="h-5 w-5" />
+                    </button>
                 </div>
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-xs text-slate-400 mb-1 uppercase font-bold">Ticker Symbol</label>
+                        <label className="block text-xs mb-1 uppercase font-bold" style={{ color: 'var(--text-secondary)' }}>
+                            Ticker Symbol
+                        </label>
                         <input
                             type="text"
                             placeholder="e.g. AAPL"
-                            className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="glass-input uppercase"
                             value={ticker}
                             onChange={e => setTicker(e.target.value.toUpperCase())}
                         />
                     </div>
                     <div>
-                        <label className="block text-xs text-slate-400 mb-1 uppercase font-bold">Number of Shares</label>
+                        <label className="block text-xs mb-1 uppercase font-bold" style={{ color: 'var(--text-secondary)' }}>
+                            Number of Shares
+                        </label>
                         <input
                             type="number"
                             placeholder="e.g. 10"
-                            className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="glass-input"
                             value={shares}
                             onChange={e => setShares(e.target.value)}
                         />
                     </div>
                     <div>
-                        <label className="block text-xs text-slate-400 mb-1 uppercase font-bold">Average Cost Basis (per share)</label>
+                        <label className="block text-xs mb-1 uppercase font-bold" style={{ color: 'var(--text-secondary)' }}>
+                            Average Cost Basis (per share)
+                        </label>
                         <input
                             type="number"
                             placeholder="e.g. 175.00"
-                            className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="glass-input"
                             value={cost}
                             onChange={e => setCost(e.target.value)}
                         />
                     </div>
-                    {error && <p className="text-rose-400 text-sm">{error}</p>}
+                    {error && <p className="text-sm" style={{ color: 'var(--negative)' }}>{error}</p>}
                     <div className="flex space-x-3 pt-2">
-                        <button onClick={onClose} className="flex-1 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white transition-colors">Cancel</button>
+                        <button
+                            onClick={onClose}
+                            className="flex-1 py-2.5 rounded-xl font-medium transition-colors"
+                            style={{
+                                background: 'rgba(255,255,255,0.08)',
+                                color: 'var(--text-secondary)',
+                                border: '1px solid rgba(255,255,255,0.12)',
+                            }}
+                        >
+                            Cancel
+                        </button>
                         <button
                             disabled={loading}
                             onClick={handleAdd}
-                            className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold transition-colors disabled:opacity-50"
+                            className="flex-1 py-2.5 font-bold transition-colors disabled:opacity-50"
+                            style={{ background: 'var(--accent)', color: '#000', borderRadius: 'var(--radius-btn)' }}
                         >
                             {loading ? 'Adding...' : 'Add Position'}
                         </button>
@@ -183,22 +264,402 @@ const AddPositionModal = ({ onClose, onAdded }) => {
 
 const CustomPieTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
-        const { ticker, value, weight } = payload[0].payload;
+        const { ticker, label, value, weight } = payload[0].payload;
         return (
-            <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg text-sm">
-                <p className="font-bold text-white">{ticker}</p>
-                <p className="text-slate-400">${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
-                <p className="text-slate-400">{(weight * 100).toFixed(1)}%</p>
+            <div className="glass p-3" style={{ borderRadius: '12px' }}>
+                <p className="font-bold" style={{ color: 'var(--text-primary)' }}>{label || ticker}</p>
+                <p style={{ color: 'var(--text-secondary)' }}>${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                <p style={{ color: 'var(--text-secondary)' }}>{(weight * 100).toFixed(1)}%</p>
             </div>
         );
     }
     return null;
 };
 
+const scoreToColor = (score) => {
+    if (!Number.isFinite(score)) return 'var(--text-primary)';
+    const s = Math.max(0, Math.min(1, score));
+    const hue = Math.round(s * 120); // 0=red, 120=green
+    return `hsl(${hue}, 82%, 58%)`;
+};
+
+const RiskLineItem = ({ code, label, value, definition, score }) => (
+    <div className="py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+        <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] uppercase font-black tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
+                        {code}
+                    </span>
+                    <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {label}
+                    </span>
+                    <span
+                        className="relative group text-[10px] uppercase tracking-wider cursor-help"
+                        style={{ color: 'var(--text-tertiary)' }}
+                        aria-label={`${label}. ${definition}`}
+                    >
+                        Info
+                        <span
+                            className="pointer-events-none absolute left-0 top-full mt-1 w-96 rounded-lg px-2 py-1.5 text-[11px] normal-case opacity-0 group-hover:opacity-100 transition-opacity z-20"
+                            style={{
+                                background: 'rgba(0,0,0,0.92)',
+                                color: 'var(--text-secondary)',
+                                border: '1px solid rgba(255,255,255,0.15)',
+                                whiteSpace: 'pre-line',
+                            }}
+                        >
+                            {definition}
+                        </span>
+                    </span>
+                </div>
+            </div>
+            <div className="text-lg font-black tabular-nums text-right" style={{ color: scoreToColor(score) }}>
+                {value}
+            </div>
+        </div>
+    </div>
+);
+
+const asNumber = (value, decimals = 2) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(decimals) : 'No Data';
+};
+
+const asPercent = (value, decimals = 2) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? `${(n * 100).toFixed(decimals)}%` : 'No Data';
+};
+
+const asCurrency = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n)
+        ? `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+        : 'No Data';
+};
+
+const asCapture = (up, down) => {
+    const u = Number(up);
+    const d = Number(down);
+    if (!Number.isFinite(u) || !Number.isFinite(d)) return 'No Data';
+    return `Up ${u.toFixed(2)} Down ${d.toFixed(2)}`;
+};
+
+const asRawPercentNumber = (value, decimals = 2) => {
+    const n = toFinite(value);
+    return n === null ? 'No Data' : n.toFixed(decimals);
+};
+
+const toFinite = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+};
+
+const sharpeBucketLabel = (value) => {
+    const n = toFinite(value);
+    if (n === null) return 'No Data';
+    if (n < 1) return 'Sharpe <1';
+    if (n < 2) return 'Sharpe 1-2';
+    if (n < 3) return 'Sharpe 2-3';
+    return 'Sharpe >3';
+};
+
+const withRiskFallback = (risk = {}, holdings = [], correlation = {}, summary = {}) => {
+    const merged = { ...risk };
+
+    if (!Number.isFinite(Number(merged.win_rate)) && holdings.length) {
+        const winners = holdings.filter(h => Number(h.gain_loss) > 0).length;
+        merged.win_rate = winners / holdings.length;
+    }
+
+    if (!Number.isFinite(Number(merged.effective_n)) && holdings.length > 0) {
+        const weights = holdings.map(h => Number(h.weight) || 0);
+        const tickers = holdings.map(h => h.ticker);
+        const hasCorr = tickers.every(t => correlation?.[t]);
+        if (hasCorr) {
+            let denom = 0;
+            for (let i = 0; i < tickers.length; i += 1) {
+                for (let j = 0; j < tickers.length; j += 1) {
+                    const c = Number(correlation?.[tickers[i]]?.[tickers[j]]);
+                    if (Number.isFinite(c)) denom += weights[i] * weights[j] * c;
+                }
+            }
+            if (denom > 0) merged.effective_n = 1 / denom;
+        }
+    }
+
+    if (!Number.isFinite(Number(merged.calmar_ratio))) {
+        const annual = Number(summary.total_gain_loss_pct) / 100;
+        const mdd = Number(merged.max_drawdown);
+        if (Number.isFinite(annual) && Number.isFinite(mdd) && Math.abs(mdd) > 1e-12) {
+            merged.calmar_ratio = annual / Math.abs(mdd);
+        }
+    }
+
+    return merged;
+};
+
+const riskScore = (code, risk = {}, summary = {}) => {
+    const toScoreHigher = (v, bad, good) => {
+        if (!Number.isFinite(v)) return null;
+        if (good === bad) return null;
+        return (v - bad) / (good - bad);
+    };
+    const toScoreLower = (v, good, bad) => {
+        if (!Number.isFinite(v)) return null;
+        if (good === bad) return null;
+        return (bad - v) / (bad - good);
+    };
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+    if (code === 'BETA') {
+        const b = toFinite(risk.beta);
+        if (b === null) return null;
+        if (b <= 0.3 || b >= 1.5) return 0;
+        if (b < 1) return clamp01((b - 0.3) / (1 - 0.3));
+        return clamp01((1.5 - b) / (1.5 - 1));
+    }
+    if (code === 'SHARPE') return clamp01(toScoreHigher(toFinite(risk.sharpe_ratio), 0.0, 3.0));
+    if (code === 'VOL') return clamp01(toScoreLower(Math.abs((toFinite(risk.volatility) ?? NaN) * 100), 14, 25));
+    if (code === 'MDD') return clamp01(toScoreLower(Math.abs((toFinite(risk.max_drawdown) ?? NaN) * 100), 10, 30));
+    if (code === 'SORTINO') return clamp01(toScoreHigher(toFinite(risk.sortino_ratio), 0.0, 2.0));
+    if (code === 'CALMAR') return clamp01(toScoreHigher(toFinite(risk.calmar_ratio), 0.25, 3.0));
+    if (code === 'VAR95') {
+        const nav = toFinite(summary.total_value);
+        const v = toFinite(risk.var_95_dollar);
+        if (nav === null || v === null || nav <= 0) return null;
+        return clamp01(toScoreLower((Math.abs(v) / nav) * 100, 1.5, 3.0));
+    }
+    if (code === 'CVAR') {
+        const v = toFinite(risk.var_95_dollar);
+        const c = toFinite(risk.cvar_95_dollar);
+        if (v === null || c === null || Math.abs(v) < 1e-12) return null;
+        const ratio = Math.abs(c) / Math.abs(v);
+        return clamp01(toScoreLower(ratio, 1.35, 2.0));
+    }
+    if (code === 'CDD') return clamp01(toScoreLower(Math.abs((toFinite(risk.current_drawdown) ?? NaN) * 100), 5, 25));
+    if (code === 'SKEW') return clamp01(toScoreHigher(toFinite(risk.skewness), -0.5, 0.8));
+    if (code === 'EN') return clamp01(toScoreHigher(toFinite(risk.effective_n), 2, 8));
+    if (code === 'ALPHA') return clamp01(toScoreHigher(toFinite(risk.jensen_alpha), -0.02, 0.06));
+    if (code === 'CAPTURE') {
+        const up = toFinite(risk.up_capture);
+        const down = toFinite(risk.down_capture);
+        if (up === null || down === null) return null;
+        return clamp01(toScoreHigher(up - down, 0.0, 0.35));
+    }
+    if (code === 'WIN') return clamp01(toScoreHigher(toFinite(risk.win_rate), 0.4, 0.7));
+    if (code === 'ULCER') return clamp01(toScoreLower((toFinite(risk.ulcer_index) ?? NaN) * 100, 5, 15));
+    return null;
+};
+
+const RISK_EXPLANATIONS = {
+    BETA: `Good: 0.8-1.2 for growth, 0.4-0.8 for conservative. Bad: >1.5 excessive market risk, <0.3 too defensive to generate meaningful returns.`,
+    SHARPE: `Good: >1.0 solid, >2.0 excellent, >3.0 elite. Bad: <0.5 not being compensated for the risk taken, <0 losing money on a risk-adjusted basis.`,
+    VOL: `Good: 10-18% for a diversified portfolio. Bad: >25% approaches single-stock risk territory, <8% likely too conservative to outperform.`,
+    MDD: `Good: <10% conservative, <20% acceptable for aggressive growth. Bad: >30% most investors capitulate before recovery, >50% catastrophic.`,
+    SORTINO: `Good: >1.0 solid, >2.0 excellent. Bad: <0.5 downside swings are consuming returns, <0 losing money net of downside risk.`,
+    CALMAR: `Good: >1.0 solid, >3.0 excellent. Bad: <0.5 max pain not justified by returns, <0.25 poor risk-adjusted performance.`,
+    VAR95: `Good: <1.5% of total portfolio value on a bad day. Bad: >3% of NAV means a single bad day causes structural damage to the portfolio.`,
+    CVAR: `Good: 1.2-1.5x your VaR figure. Bad: >2x VaR signals extreme fat tails and blow-up risk on worst days.`,
+    CDD: `Good: <5% from peak in normal conditions. Bad: >15% and still declining suggests something structural is broken, >25% is a crisis.`,
+    SKEW: `Good: >0.3 positive skew, winners meaningfully outrun losers. Bad: <-0.5 left-tail blow-up risk, your worst days significantly exceed your best days.`,
+    EN: `Good: >5 meaningful diversification, >8 well-diversified. Bad: <3 concentrated 2-3 stock bet regardless of ticker count, <2 essentially a single-position portfolio.`,
+    ALPHA: `Good: >2% annualized consistently suggests genuine edge. Bad: <0% SPY would have outperformed you on a risk-adjusted basis, <-2% significant value destruction.`,
+    CAPTURE: `Good: Up capture exceeds Down capture by 15+ points (e.g., 1.20 up / 0.85 down). Bad: Down capture >= Up capture means no asymmetry, you are a leveraged index fund with fees.`,
+    WIN: `Good: >50% with average winner near equal to average loser, or 40-50% if average winner is 2x+ average loser. Bad: <40% with winners less than 1.5x losers is negative expectancy by math.`,
+    ULCER: `Good: <5% drawdowns are shallow or short-lived. Bad: >10% spending significant time deep underwater, >15% chronic drawdown pattern.`,
+};
+
+const BROKER_COLORS = {
+    Webull:    '#04A6E0',
+    Robinhood: '#00C805',
+};
+
+const DEFAULT_BROKER_COLOR = '#9ca3af';
+
+function getBrokerColor(name) {
+    return BROKER_COLORS[name] || DEFAULT_BROKER_COLOR;
+}
+
+function relativeTime(isoString) {
+    if (!isoString) return 'never';
+    const diff = (Date.now() - new Date(isoString)) / 1000;
+    if (diff < 60)    return 'just now';
+    if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+}
+
+const SyncedHoldingsSection = ({ accounts, positions, accountFilter, onFilterChange }) => {
+    const hasAccounts = accounts.length > 0;
+    const hasPositions = positions.length > 0;
+
+    const filteredPositions = useMemo(() => {
+        if (!accountFilter || accountFilter === 'all') return positions;
+        return positions.filter(p => p.account_id === accountFilter);
+    }, [positions, accountFilter]);
+
+    // Most recent last_synced across filtered positions
+    const lastSynced = useMemo(() => {
+        const dates = filteredPositions.map(p => p.last_synced).filter(Boolean);
+        if (!dates.length) return null;
+        return dates.reduce((a, b) => (a > b ? a : b));
+    }, [filteredPositions]);
+
+    return (
+        <div className="glass overflow-hidden" style={{ padding: 0 }}>
+            <div
+                className="px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+            >
+                <div>
+                    <h3 className="text-sm font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
+                        Synced Holdings
+                    </h3>
+                    {lastSynced && (
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                            Last updated {relativeTime(lastSynced)}
+                        </p>
+                    )}
+                </div>
+                {hasAccounts && (
+                    <select
+                        value={accountFilter}
+                        onChange={e => onFilterChange(e.target.value)}
+                        className="text-xs font-bold rounded-lg px-3 py-1.5 outline-none"
+                        style={{
+                            background: 'rgba(255,255,255,0.08)',
+                            color: 'var(--text-secondary)',
+                            border: '1px solid rgba(255,255,255,0.14)',
+                        }}
+                    >
+                        <option value="all">All accounts</option>
+                        {accounts.map(a => (
+                            <option key={a.account_id} value={a.account_id}>
+                                {a.brokerage_name}{a.account_name ? ` — ${a.account_name}` : ''}{a.account_number ? ` ${a.account_number}` : ''}
+                            </option>
+                        ))}
+                    </select>
+                )}
+            </div>
+
+            {!hasAccounts ? (
+                <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
+                    <Wifi className="h-8 w-8 mb-3" style={{ color: 'rgba(255,255,255,0.12)' }} />
+                    <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+                        Not connected — link a brokerage above to see synced positions here.
+                    </p>
+                </div>
+            ) : !hasPositions ? (
+                <div className="flex items-center justify-center py-10">
+                    <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+                        No positions synced yet — click Sync All to fetch your holdings.
+                    </p>
+                </div>
+            ) : filteredPositions.length === 0 ? (
+                <div className="flex items-center justify-center py-10">
+                    <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>No positions for selected account.</p>
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr
+                                className="text-[10px] uppercase font-bold tracking-widest"
+                                style={{ color: 'var(--text-tertiary)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+                            >
+                                <th className="py-3 px-3 text-left">Ticker</th>
+                                <th className="py-3 px-3 text-left">Brokerage</th>
+                                <th className="py-3 px-3 text-left">Account</th>
+                                <th className="py-3 px-3 text-right">Shares</th>
+                                <th className="py-3 px-3 text-right">Avg Cost</th>
+                                <th className="py-3 px-3 text-right">Current</th>
+                                <th className="py-3 px-3 text-right">Market Value</th>
+                                <th className="py-3 px-3 text-right">Unrealized P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filteredPositions.map(p => {
+                                const isPos = (p.open_pnl || 0) >= 0;
+                                const color = getBrokerColor(p.brokerage_name);
+                                return (
+                                    <tr
+                                        key={p.id}
+                                        className="transition-colors"
+                                        style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                                    >
+                                        <td className="py-3 px-3">
+                                            <Link
+                                                to={`/stock/${p.ticker}`}
+                                                className="font-bold transition-colors hover:opacity-80"
+                                                style={{ color: 'var(--accent)' }}
+                                            >
+                                                {p.ticker}
+                                            </Link>
+                                            {p.symbol_description && (
+                                                <p className="text-[10px] mt-0.5 truncate max-w-[160px]" style={{ color: 'var(--text-tertiary)' }}>
+                                                    {p.symbol_description}
+                                                </p>
+                                            )}
+                                        </td>
+                                        <td className="py-3 px-3">
+                                            <span
+                                                className="inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider"
+                                                style={{ background: `${color}20`, color: color, border: `1px solid ${color}40` }}
+                                            >
+                                                {p.brokerage_name}
+                                            </span>
+                                        </td>
+                                        <td className="py-3 px-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                                            {p.account_name || '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right" style={{ color: 'var(--text-secondary)' }}>
+                                            {p.units != null ? p.units.toLocaleString(undefined, { maximumFractionDigits: 6 }) : '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right" style={{ color: 'var(--text-secondary)' }}>
+                                            {p.average_purchase_price != null ? `$${p.average_purchase_price.toFixed(2)}` : '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right font-medium" style={{ color: 'var(--text-primary)' }}>
+                                            {p.current_price != null ? `$${p.current_price.toFixed(2)}` : '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right font-bold" style={{ color: 'var(--text-primary)' }}>
+                                            {p.current_market_value != null
+                                                ? `$${p.current_market_value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                                                : '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right">
+                                            <div className="flex flex-col items-end">
+                                                <span className="font-bold" style={{ color: isPos ? 'var(--positive)' : 'var(--negative)' }}>
+                                                    {isPos ? '+' : ''}{p.open_pnl != null ? `$${p.open_pnl.toFixed(2)}` : '—'}
+                                                </span>
+                                                {p.open_pnl_percent != null && (
+                                                    <span className="text-xs opacity-75" style={{ color: isPos ? 'var(--positive)' : 'var(--negative)' }}>
+                                                        {isPos ? '+' : ''}{(p.open_pnl_percent * 100).toFixed(2)}%
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    );
+};
+
 const Portfolio = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
+    const [allocationMode, setAllocationMode] = useState('ticker');
+    const [showAllRiskMetrics, setShowAllRiskMetrics] = useState(false);
+    const [syncedAccountFilter, setSyncedAccountFilter] = useState('all');
+
+    // Brokerage sync state (shared hook)
+    const brokerage = useBrokerageSync();
 
     const fetchPortfolio = useCallback(async () => {
         setLoading(true);
@@ -223,26 +684,162 @@ const Portfolio = () => {
         try { await axios.put(`/api/portfolio/${ticker}`, { shares, avg_cost }); fetchPortfolio(); } catch (e) { console.error(e); }
     };
 
+    const { summary, holdings, risk, correlation } = data || { summary: {}, holdings: [], risk: {}, correlation: {} };
+    const safeSummary = (summary && typeof summary === 'object') ? summary : {};
+    const safeRisk = (risk && typeof risk === 'object') ? risk : {};
+    const safeHoldings = Array.isArray(holdings) ? holdings : [];
+    const safeCorrelation = (correlation && typeof correlation === 'object') ? correlation : {};
+
+    const isEmpty = safeHoldings.length === 0;
+    const displayRisk = withRiskFallback(safeRisk, safeHoldings, safeCorrelation, safeSummary);
+
+    const allocationData = useMemo(() => {
+        const items = safeHoldings;
+        const totalValue = items.reduce((sum, h) => sum + (Number(h.value) || 0), 0);
+
+        if (allocationMode === 'ticker') {
+            return items.map((h) => ({
+                label: h.ticker,
+                value: Number(h.value) || 0,
+                weight: totalValue > 0 ? (Number(h.value) || 0) / totalValue : 0,
+            }));
+        }
+
+        const grouped = {};
+        items.forEach((h) => {
+            const key = allocationMode === 'sector'
+                ? (h.sector || 'Unknown')
+                : sharpeBucketLabel(h.holding_sharpe);
+            grouped[key] = (grouped[key] || 0) + (Number(h.value) || 0);
+        });
+
+        return Object.entries(grouped)
+            .map(([label, value]) => ({
+                label,
+                value,
+                weight: totalValue > 0 ? value / totalValue : 0,
+            }))
+            .sort((a, b) => b.value - a.value);
+    }, [safeHoldings, allocationMode]);
+
+    const riskItems = [
+        {
+            code: 'BETA',
+            label: 'Portfolio Beta',
+            value: asNumber(displayRisk.beta),
+            definition: RISK_EXPLANATIONS.BETA,
+        },
+        {
+            code: 'SHARPE',
+            label: 'Sharpe Ratio',
+            value: asNumber(displayRisk.sharpe_ratio),
+            definition: RISK_EXPLANATIONS.SHARPE,
+        },
+        {
+            code: 'VOL',
+            label: 'Annualized Volatility',
+            value: asPercent(displayRisk.volatility, 1),
+            definition: RISK_EXPLANATIONS.VOL,
+        },
+        {
+            code: 'MDD',
+            label: 'Max Drawdown',
+            value: asPercent(displayRisk.max_drawdown, 1),
+            definition: RISK_EXPLANATIONS.MDD,
+        },
+        {
+            code: 'SORTINO',
+            label: 'Sortino Ratio',
+            value: asNumber(displayRisk.sortino_ratio),
+            definition: RISK_EXPLANATIONS.SORTINO,
+        },
+        {
+            code: 'CALMAR',
+            label: 'Calmar Ratio',
+            value: asNumber(displayRisk.calmar_ratio),
+            definition: RISK_EXPLANATIONS.CALMAR,
+        },
+        {
+            code: 'VAR95',
+            label: 'Value at Risk 95',
+            value: asCurrency(displayRisk.var_95_dollar),
+            definition: RISK_EXPLANATIONS.VAR95,
+        },
+        {
+            code: 'CVAR',
+            label: 'CVaR Expected Shortfall',
+            value: asCurrency(displayRisk.cvar_95_dollar),
+            definition: RISK_EXPLANATIONS.CVAR,
+        },
+        {
+            code: 'CDD',
+            label: 'Current Drawdown',
+            value: asPercent(displayRisk.current_drawdown, 1),
+            definition: RISK_EXPLANATIONS.CDD,
+        },
+        {
+            code: 'SKEW',
+            label: 'Skewness',
+            value: asNumber(displayRisk.skewness),
+            definition: RISK_EXPLANATIONS.SKEW,
+        },
+        {
+            code: 'EN',
+            label: 'Effective N',
+            value: asNumber(displayRisk.effective_n),
+            definition: RISK_EXPLANATIONS.EN,
+        },
+        {
+            code: 'ALPHA',
+            label: 'Jensen Alpha',
+            value: asPercent(displayRisk.jensen_alpha, 2),
+            definition: RISK_EXPLANATIONS.ALPHA,
+        },
+        {
+            code: 'CAPTURE',
+            label: 'Up Down Capture vs SPY',
+            value: asCapture(displayRisk.up_capture, displayRisk.down_capture),
+            definition: RISK_EXPLANATIONS.CAPTURE,
+        },
+        {
+            code: 'WIN',
+            label: 'Win Rate',
+            value: asPercent(displayRisk.win_rate, 1),
+            definition: RISK_EXPLANATIONS.WIN,
+        },
+        {
+            code: 'ULCER',
+            label: 'Ulcer Index',
+            value: asPercent(displayRisk.ulcer_index, 2),
+            definition: RISK_EXPLANATIONS.ULCER,
+        },
+    ];
+
+    const visibleRiskItems = showAllRiskMetrics ? riskItems : riskItems.slice(0, 8);
+
     if (loading) return (
         <div className="flex items-center justify-center h-[60vh]">
-            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <div
+                className="w-10 h-10 rounded-full animate-spin"
+                style={{ border: '4px solid var(--accent)', borderTopColor: 'transparent' }}
+            />
         </div>
     );
 
-    const { summary, holdings, risk, correlation } = data || { summary: {}, holdings: [], risk: {}, correlation: {} };
-    const isEmpty = !holdings || holdings.length === 0;
-
     return (
-        <div className="space-y-8">
+        <>
+        <ParticlesBg canvasId="particles-portfolio" />
+        <div className="relative space-y-8" style={{ zIndex: 1 }}>
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
-                    <h1 className="text-3xl font-black text-white tracking-tight">My Portfolio</h1>
-                    <p className="text-slate-400 mt-1 text-sm">Real-time performance & risk analytics</p>
+                    <h1 className="text-3xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>My Portfolio</h1>
+                    <p className="mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>Real-time performance & risk analytics</p>
                 </div>
                 <button
                     onClick={() => setShowAddModal(true)}
-                    className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded-xl transition-colors shadow-lg shadow-blue-600/20"
+                    className="flex items-center space-x-2 font-bold px-5 py-2.5 transition-colors"
+                    style={{ background: 'var(--accent)', color: '#000', borderRadius: 'var(--radius-btn)' }}
                 >
                     <Plus className="h-5 w-5" />
                     <span>Add Position</span>
@@ -252,56 +849,121 @@ const Portfolio = () => {
             {/* Summary Bar */}
             {!isEmpty && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="col-span-2 bg-gradient-to-br from-blue-600/20 to-slate-800 border border-blue-500/20 rounded-2xl p-5 relative overflow-hidden">
-                        <p className="text-xs text-slate-500 uppercase font-bold tracking-widest">Total Market Value</p>
-                        <p className="text-3xl font-black text-white mt-1">
-                            ${summary.total_value?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                    {/* Manual portfolio value */}
+                    <div className="col-span-2 glass p-5 relative overflow-hidden">
+                        <p className="text-xs uppercase font-bold tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Manual Portfolio</p>
+                        <p className="text-3xl font-black mt-1" style={{ color: 'var(--text-primary)' }}>
+                            ${toFinite(safeSummary.total_value)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                         </p>
-                        <div className={`flex items-center mt-2 text-sm font-bold ${summary.total_gain_loss >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {summary.total_gain_loss >= 0 ? <TrendingUp className="h-4 w-4 mr-1" /> : <TrendingDown className="h-4 w-4 mr-1" />}
-                            {summary.total_gain_loss >= 0 ? '+' : ''}${Math.abs(summary.total_gain_loss).toFixed(2)} ({summary.total_gain_loss_pct?.toFixed(2)}%) Total Return
+                        <div
+                            className="flex items-center mt-2 text-sm font-bold"
+                            style={{ color: (toFinite(safeSummary.total_gain_loss) ?? 0) >= 0 ? 'var(--positive)' : 'var(--negative)' }}
+                        >
+                            {(toFinite(safeSummary.total_gain_loss) ?? 0) >= 0
+                                ? <TrendingUp className="h-4 w-4 mr-1" />
+                                : <TrendingDown className="h-4 w-4 mr-1" />
+                            }
+                            {(toFinite(safeSummary.total_gain_loss) ?? 0) >= 0 ? '+' : ''}${Math.abs(toFinite(safeSummary.total_gain_loss) ?? 0).toFixed(2)} ({asRawPercentNumber(safeSummary.total_gain_loss_pct, 2)}%) Total Return
                         </div>
-                        <TrendingUp className="absolute -right-6 -bottom-6 text-blue-500/10 h-32 w-32 select-none pointer-events-none" />
+
+                        {/* Synced + combined sub-row */}
+                        {brokerage.summary && brokerage.summary.account_count > 0 && (
+                            <div className="mt-3 pt-3 space-y-1" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                                <div className="flex items-center justify-between text-xs">
+                                    <span style={{ color: 'var(--text-tertiary)' }}>Synced brokerages</span>
+                                    <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>
+                                        ${brokerage.summary.total_portfolio_value?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="font-bold" style={{ color: 'var(--text-tertiary)' }}>Combined total</span>
+                                    <span className="font-black" style={{ color: 'var(--accent)' }}>
+                                        ${((toFinite(safeSummary.total_value) || 0) + (brokerage.summary.total_portfolio_value || 0)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </div>
-                    <MetricCard icon={Target} label="Beta" value={risk.beta?.toFixed(2) || '—'} color="bg-blue-500/10 text-blue-400" />
-                    <MetricCard icon={Shield} label="Sharpe Ratio" value={risk.sharpe_ratio?.toFixed(2) || '—'} color="bg-emerald-500/10 text-emerald-400" />
+                    <MetricCard icon={Target} label="Beta" value={asNumber(displayRisk.beta)} color="bg-blue-500/10 text-blue-400" />
+                    <MetricCard icon={Shield} label="Sharpe Ratio" value={asNumber(displayRisk.sharpe_ratio)} color="bg-emerald-500/10 text-emerald-400" />
                 </div>
             )}
 
             {isEmpty ? (
                 /* Empty State */
-                <div className="flex flex-col items-center justify-center py-32 border-2 border-dashed border-slate-700 rounded-2xl">
-                    <Zap className="h-16 w-16 text-slate-700 mb-6" />
-                    <h2 className="text-xl font-bold text-slate-400 mb-2">Portfolio is empty</h2>
-                    <p className="text-slate-600 mb-8 text-sm text-center max-w-sm">
-                        Start by adding your first stock position to track your investments and see risk analytics.
-                    </p>
-                    <button
-                        onClick={() => setShowAddModal(true)}
-                        className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-3 rounded-xl transition-colors"
+                <div className="space-y-8">
+                    <div
+                        className="flex flex-col items-center justify-center py-20"
+                        style={{
+                            borderRadius: '20px',
+                            border: '2px dashed rgba(255,255,255,0.12)',
+                            background: 'rgba(255,255,255,0.03)',
+                        }}
                     >
-                        <Plus className="h-5 w-5" />
-                        <span>Add Your First Position</span>
-                    </button>
+                        <Zap className="h-16 w-16 mb-6" style={{ color: 'rgba(255,255,255,0.15)' }} />
+                        <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-secondary)' }}>Portfolio is empty</h2>
+                        <p className="mb-8 text-sm text-center max-w-sm" style={{ color: 'var(--text-tertiary)' }}>
+                            Start by adding your first stock position to track your investments and see risk analytics.
+                        </p>
+                        <button
+                            onClick={() => setShowAddModal(true)}
+                            className="flex items-center space-x-2 font-bold px-6 py-3 transition-colors"
+                            style={{ background: 'var(--accent)', color: '#000', borderRadius: 'var(--radius-btn)' }}
+                        >
+                            <Plus className="h-5 w-5" />
+                            <span>Add Your First Position</span>
+                        </button>
+                    </div>
+                    <BrokerageManager
+                        accounts={brokerage.accounts}
+                        positions={brokerage.positions}
+                        balances={brokerage.balances}
+                        summary={brokerage.summary}
+                        isSyncing={brokerage.isSyncing}
+                        syncingAccountId={brokerage.syncingAccountId}
+                        syncAll={brokerage.syncAll}
+                        syncAccount={brokerage.syncAccount}
+                        disconnect={brokerage.disconnect}
+                        fetchAccounts={brokerage.fetchAccounts}
+                        getConnectUrl={brokerage.getConnectUrl}
+                    />
                 </div>
             ) : (
                 <>
                     {/* Allocation + Risk */}
                     <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-                        <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 lg:col-span-2">
-                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Portfolio Allocation</h3>
+                        <div className="glass p-5 lg:col-span-2">
+                            <div className="flex items-center justify-between mb-4 gap-3">
+                                <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
+                                    Portfolio Allocation
+                                </h3>
+                                <select
+                                    value={allocationMode}
+                                    onChange={(e) => setAllocationMode(e.target.value)}
+                                    className="text-xs font-bold uppercase tracking-wide rounded-md px-2 py-1 outline-none"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.08)',
+                                        color: 'var(--text-secondary)',
+                                        border: '1px solid rgba(255,255,255,0.14)'
+                                    }}
+                                >
+                                    <option value="ticker">By Ticker</option>
+                                    <option value="sector">By Sector</option>
+                                    <option value="sharpe">By Sharpe Bucket</option>
+                                </select>
+                            </div>
                             <div className="h-56 w-full">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <PieChart>
                                         <Pie
-                                            data={holdings}
+                                            data={allocationData}
                                             cx="50%" cy="50%"
                                             innerRadius={55} outerRadius={85}
                                             paddingAngle={3}
                                             dataKey="value"
-                                            nameKey="ticker"
+                                            nameKey="label"
                                         >
-                                            {holdings.map((_, i) => (
+                                            {allocationData.map((_, i) => (
                                                 <Cell key={i} fill={COLORS[i % COLORS.length]} stroke="none" />
                                             ))}
                                         </Pie>
@@ -310,67 +972,81 @@ const Portfolio = () => {
                                 </ResponsiveContainer>
                             </div>
                             <div className="space-y-2 mt-2">
-                                {holdings.map((h, i) => (
-                                    <div key={h.ticker} className="flex items-center justify-between text-xs">
+                                {allocationData.map((h, i) => (
+                                    <div key={h.label} className="flex items-center justify-between text-xs">
                                         <div className="flex items-center space-x-2">
                                             <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                                            <span className="font-bold text-slate-200">{h.ticker}</span>
+                                            <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>{h.label}</span>
                                         </div>
-                                        <span className="text-slate-500">{(h.weight * 100).toFixed(1)}%</span>
+                                        <span style={{ color: 'var(--text-tertiary)' }}>{(h.weight * 100).toFixed(1)}%</span>
                                     </div>
                                 ))}
                             </div>
                         </div>
 
-                        <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5 lg:col-span-3">
-                            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-5">Risk Profile</h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                <MetricCard
-                                    icon={Target} label="Portfolio Beta"
-                                    value={risk.beta?.toFixed(2) || '—'}
-                                    color="bg-blue-500/10 text-blue-400"
-                                />
-                                <MetricCard
-                                    icon={Shield} label="Sharpe Ratio"
-                                    value={risk.sharpe_ratio?.toFixed(2) || '—'}
-                                    color="bg-emerald-500/10 text-emerald-400"
-                                />
-                                <MetricCard
-                                    icon={Activity} label="Ann. Volatility"
-                                    value={risk.volatility ? `${(risk.volatility * 100).toFixed(1)}%` : '—'}
-                                    color="bg-amber-500/10 text-amber-400"
-                                />
-                                <MetricCard
-                                    icon={AlertTriangle} label="Max Drawdown"
-                                    value={risk.max_drawdown ? `${(risk.max_drawdown * 100).toFixed(1)}%` : '—'}
-                                    color="bg-rose-500/10 text-rose-400"
-                                />
+                        <div className="glass p-5 lg:col-span-3">
+                            <h3 className="text-xs font-bold uppercase tracking-widest mb-5" style={{ color: 'var(--text-tertiary)' }}>
+                                Risk Profile
+                            </h3>
+                            <div>
+                                {visibleRiskItems.map((item) => (
+                                    <RiskLineItem
+                                        key={item.code}
+                                        code={item.code}
+                                        label={item.label}
+                                        value={item.value}
+                                        definition={item.definition}
+                                        score={riskScore(item.code, displayRisk, safeSummary)}
+                                    />
+                                ))}
                             </div>
+                            {riskItems.length > 8 && (
+                                <button
+                                    onClick={() => setShowAllRiskMetrics(prev => !prev)}
+                                    className="mt-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider hover:opacity-80 transition-opacity"
+                                    style={{ color: 'var(--text-secondary)' }}
+                                >
+                                    {showAllRiskMetrics ? (
+                                        <ChevronUp className="w-4 h-4" />
+                                    ) : (
+                                        <ChevronDown className="w-4 h-4" />
+                                    )}
+                                    {showAllRiskMetrics ? 'Show less' : 'Show more'}
+                                </button>
+                            )}
                         </div>
                     </div>
 
                     {/* Holdings Table */}
-                    <div className="bg-slate-800 border border-slate-700/50 rounded-2xl overflow-hidden">
-                        <div className="px-5 py-4 border-b border-slate-700/50 flex items-center justify-between">
-                            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Holdings</h3>
-                            <span className="text-xs text-slate-500">{holdings.length} position{holdings.length !== 1 ? 's' : ''}</span>
+                    <div className="glass overflow-hidden" style={{ padding: 0 }}>
+                        <div
+                            className="px-5 py-4 flex items-center justify-between"
+                            style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+                        >
+                            <h3 className="text-sm font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Holdings</h3>
+                            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                                {safeHoldings.length} position{safeHoldings.length !== 1 ? 's' : ''}
+                            </span>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="text-[10px] uppercase text-slate-500 border-b border-slate-700/50">
-                                        <th className="py-3 px-3 text-left font-bold tracking-widest">Ticker</th>
-                                        <th className="py-3 px-3 text-right font-bold tracking-widest">Shares</th>
-                                        <th className="py-3 px-3 text-right font-bold tracking-widest">Avg Cost</th>
-                                        <th className="py-3 px-3 text-right font-bold tracking-widest">Current</th>
-                                        <th className="py-3 px-3 text-right font-bold tracking-widest">Value</th>
-                                        <th className="py-3 px-3 text-right font-bold tracking-widest">Gain/Loss</th>
-                                        <th className="py-3 px-3 text-right font-bold tracking-widest">Weight</th>
+                                    <tr
+                                        className="text-[10px] uppercase font-bold tracking-widest"
+                                        style={{ color: 'var(--text-tertiary)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+                                    >
+                                        <th className="py-3 px-3 text-left">Ticker</th>
+                                        <th className="py-3 px-3 text-right">Shares</th>
+                                        <th className="py-3 px-3 text-right">Avg Cost</th>
+                                        <th className="py-3 px-3 text-right">Current</th>
+                                        <th className="py-3 px-3 text-right">Value</th>
+                                        <th className="py-3 px-3 text-right">Gain/Loss</th>
+                                        <th className="py-3 px-3 text-right">Weight</th>
                                         <th className="py-3 px-3"></th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {holdings.map(h => (
+                                    {safeHoldings.map(h => (
                                         <EditableRow
                                             key={h.ticker}
                                             holding={h}
@@ -383,47 +1059,79 @@ const Portfolio = () => {
                         </div>
                     </div>
 
+                    {/* Connected Accounts */}
+                    <BrokerageManager
+                        accounts={brokerage.accounts}
+                        positions={brokerage.positions}
+                        balances={brokerage.balances}
+                        summary={brokerage.summary}
+                        isSyncing={brokerage.isSyncing}
+                        syncingAccountId={brokerage.syncingAccountId}
+                        syncAll={brokerage.syncAll}
+                        syncAccount={brokerage.syncAccount}
+                        disconnect={brokerage.disconnect}
+                        fetchAccounts={brokerage.fetchAccounts}
+                        getConnectUrl={brokerage.getConnectUrl}
+                    />
+
+                    {/* Synced Holdings */}
+                    <SyncedHoldingsSection
+                        accounts={brokerage.accounts}
+                        positions={brokerage.positions}
+                        accountFilter={syncedAccountFilter}
+                        onFilterChange={setSyncedAccountFilter}
+                    />
+
                     {/* Correlation Heatmap */}
-                    {holdings.length >= 2 && correlation && Object.keys(correlation).length > 0 && (
-                        <div className="bg-slate-800 border border-slate-700/50 rounded-2xl p-5">
+                    {safeHoldings.length >= 2 && Object.keys(safeCorrelation).length > 0 && (
+                        <div className="glass p-5">
                             <div className="flex items-center justify-between mb-5">
-                                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Correlation Matrix</h3>
-                                <span className="text-xs text-slate-500">1-Year Daily Returns</span>
+                                <h3 className="text-sm font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
+                                    Correlation Matrix
+                                </h3>
+                                <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>1-Year Daily Returns</span>
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="text-xs mx-auto">
                                     <thead>
                                         <tr>
                                             <th className="p-2 w-16"></th>
-                                            {holdings.map(h => (
-                                                <th key={h.ticker} className="p-2 text-slate-400 font-black uppercase w-16 text-center">{h.ticker}</th>
+                                            {safeHoldings.map(h => (
+                                                <th key={h.ticker} className="p-2 font-black uppercase w-16 text-center" style={{ color: 'var(--text-secondary)' }}>
+                                                    {h.ticker}
+                                                </th>
                                             ))}
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {holdings.map(h1 => (
+                                        {safeHoldings.map(h1 => (
                                             <tr key={h1.ticker}>
-                                                <td className="p-2 text-slate-400 font-black uppercase text-right pr-3">{h1.ticker}</td>
-                                                {holdings.map(h2 => {
-                                                    const val = correlation?.[h1.ticker]?.[h2.ticker] ?? 0;
+                                                <td className="p-2 font-black uppercase text-right pr-3" style={{ color: 'var(--text-secondary)' }}>
+                                                    {h1.ticker}
+                                                </td>
+                                                {safeHoldings.map(h2 => {
+                                                    const val = Number(safeCorrelation?.[h1.ticker]?.[h2.ticker] ?? 0);
                                                     const isIdentity = h1.ticker === h2.ticker;
-                                                    let bg = 'bg-slate-700';
-                                                    let textColor = 'text-slate-400';
+                                                    let bg = 'rgba(255,255,255,0.06)';
+                                                    let textColor = 'var(--text-tertiary)';
                                                     if (isIdentity) {
-                                                        bg = 'bg-slate-600'; textColor = 'text-slate-300';
+                                                        bg = 'rgba(255,255,255,0.10)'; textColor = 'var(--text-secondary)';
                                                     } else if (val > 0.7) {
-                                                        bg = 'bg-emerald-500/40'; textColor = 'text-emerald-200';
+                                                        bg = 'rgba(48,209,88,0.28)'; textColor = '#a8f5be';
                                                     } else if (val > 0.3) {
-                                                        bg = 'bg-emerald-500/20'; textColor = 'text-emerald-300';
+                                                        bg = 'rgba(48,209,88,0.14)'; textColor = 'var(--positive)';
                                                     } else if (val < -0.3) {
-                                                        bg = 'bg-rose-500/30'; textColor = 'text-rose-300';
+                                                        bg = 'rgba(255,69,58,0.24)'; textColor = '#ffa5a0';
                                                     } else if (val < -0.1) {
-                                                        bg = 'bg-rose-500/15'; textColor = 'text-rose-400';
+                                                        bg = 'rgba(255,69,58,0.11)'; textColor = 'var(--negative)';
                                                     }
                                                     return (
                                                         <td key={h2.ticker} className="p-1">
-                                                            <div className={`w-14 h-10 flex items-center justify-center rounded-md ${bg}`}>
-                                                                <span className={`font-bold ${textColor}`}>{val.toFixed(2)}</span>
+                                                            <div
+                                                                className="w-14 h-10 flex items-center justify-center rounded-md"
+                                                                style={{ background: bg }}
+                                                            >
+                                                                <span className="font-bold" style={{ color: textColor }}>{val.toFixed(2)}</span>
                                                             </div>
                                                         </td>
                                                     );
@@ -433,7 +1141,7 @@ const Portfolio = () => {
                                     </tbody>
                                 </table>
                             </div>
-                            <p className="text-xs text-slate-600 mt-4 text-center">
+                            <p className="text-xs mt-4 text-center" style={{ color: 'var(--text-tertiary)' }}>
                                 🟢 High positive correlation · ⬜ Low correlation · 🔴 Negative correlation
                             </p>
                         </div>
@@ -445,6 +1153,7 @@ const Portfolio = () => {
                 <AddPositionModal onClose={() => setShowAddModal(false)} onAdded={fetchPortfolio} />
             )}
         </div>
+        </>
     );
 };
 

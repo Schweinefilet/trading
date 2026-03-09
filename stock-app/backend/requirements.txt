@@ -7,3 +7,6 @@ pandas-ta-classic
 finnhub-python
 sqlalchemy
 python-dotenv
+snaptrade-python-sdk
+apscheduler
+cryptography
