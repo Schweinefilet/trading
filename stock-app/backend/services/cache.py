@@ -28,7 +28,8 @@ class CacheService:
             'fundamentals': timedelta(hours=24),
             'financials': timedelta(days=7),
             'history': timedelta(hours=1),
-            'correlation': timedelta(hours=24)
+            'correlation': timedelta(hours=24),
+            'portfolio_analytics': timedelta(seconds=60),
         }
         
         ttl = ttls.get(data_type, timedelta(hours=1))
@@ -37,6 +38,21 @@ class CacheService:
             return None
             
         return cache_entry.data
+
+    @staticmethod
+    def delete(ticker, data_type, key_params=None):
+        """
+        Deletes a specific cached entry if it exists.
+        """
+        cache_entry = StockCache.query.filter_by(
+            ticker=ticker,
+            data_type=data_type,
+            key_params=str(key_params) if key_params else None
+        ).first()
+
+        if cache_entry:
+            db.session.delete(cache_entry)
+            db.session.commit()
 
     @staticmethod
     def set(ticker, data_type, data, key_params=None):

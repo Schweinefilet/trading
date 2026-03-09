@@ -106,6 +106,33 @@ const StockDetail = () => {
     const [captureBusy, setCaptureBusy] = useState(false);
     const settingsDropdownRef = useRef(null);
     const captureFrameRef = useRef(null);
+    const requestSeqRef = useRef(0);
+
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const getWithRetry = useCallback(async (url, config = {}, maxAttempts = 3) => {
+        let attempt = 0;
+        while (attempt < maxAttempts) {
+            try {
+                return await axios.get(url, config);
+            } catch (err) {
+                if (err?.code === 'ERR_CANCELED') throw err;
+                const status = err?.response?.status;
+                const retryAfter = Number(err?.response?.headers?.['retry-after']);
+                const isRateLimited = status === 429;
+                attempt += 1;
+
+                if (!isRateLimited || attempt >= maxAttempts) {
+                    throw err;
+                }
+
+                const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
+                    ? retryAfter * 1000
+                    : 700 * (2 ** (attempt - 1));
+                await sleep(backoffMs);
+            }
+        }
+    }, []);
 
     // Reset hovered bar on ticker change
     useEffect(() => { setHoveredBar(null); }, [ticker]);
@@ -169,15 +196,23 @@ const StockDetail = () => {
     }, [ticker, captureBusy]);
 
     useEffect(() => {
+        const requestId = requestSeqRef.current + 1;
+        requestSeqRef.current = requestId;
+        const controller = new AbortController();
+
         const fetchData = async () => {
             setLoading(true);
             try {
                 const indicatorsParam = activeIndicators.join(',');
                 const [historyRes, indicatorRes, quoteRes] = await Promise.all([
-                    axios.get(`http://localhost:5001/api/stock/${ticker}/history?period=${period}&interval=${interval}`),
-                    axios.get(`http://localhost:5001/api/stock/${ticker}/indicators?period=${period}&interval=${interval}&indicators=${indicatorsParam}`),
-                    axios.get(`http://localhost:5001/api/stock/${ticker}/quote`)
+                    getWithRetry(`http://localhost:5001/api/stock/${ticker}/history?period=${period}&interval=${interval}`, { signal: controller.signal }),
+                    getWithRetry(`http://localhost:5001/api/stock/${ticker}/indicators?period=${period}&interval=${interval}&indicators=${indicatorsParam}`, { signal: controller.signal }),
+                    getWithRetry(`http://localhost:5001/api/stock/${ticker}/quote`, { signal: controller.signal })
                 ]);
+
+                if (requestSeqRef.current !== requestId) {
+                    return;
+                }
 
                 const hData = Array.isArray(historyRes.data) ? historyRes.data : [];
                 const iData = Array.isArray(indicatorRes.data) ? indicatorRes.data : [];
@@ -189,14 +224,28 @@ const StockDetail = () => {
                 setQuote(quoteRes.data);
                 setError(null);
             } catch (err) {
+                if (err?.code === 'ERR_CANCELED') {
+                    return;
+                }
                 console.error("Fetch error:", err);
-                setError("Market data unavailable for this ticker or interval.");
+                const status = err?.response?.status;
+                if (status === 429) {
+                    setError("Rate limited while loading market data. Retrying shortly usually resolves it.");
+                } else {
+                    setError("Market data unavailable for this ticker or interval.");
+                }
             } finally {
-                setLoading(false);
+                if (requestSeqRef.current === requestId) {
+                    setLoading(false);
+                }
             }
         };
         fetchData();
-    }, [ticker, period, interval, activeIndicators]);
+
+        return () => {
+            controller.abort();
+        };
+    }, [ticker, period, interval, activeIndicators, getWithRetry]);
 
     return (
         <div className="flex flex-col h-screen bg-black text-[#d1d4dc] overflow-hidden">

@@ -120,12 +120,12 @@ const StockSearch = () => {
             </form>
 
             {showDropdown && suggestions.length > 0 && (
-                <div className="absolute z-50 top-full mt-2 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+                <div className="absolute z-50 top-full mt-2 w-full bg-zinc-900/95 border border-zinc-700/50 rounded-xl shadow-2xl overflow-hidden backdrop-blur-sm">
                     {suggestions.map((s, i) => (
                         <button
                             key={s.ticker}
                             onMouseDown={() => navigateTo(s.ticker)}
-                            className={`w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-700 transition-colors ${i === activeIndex ? 'bg-slate-700' : ''
+                            className={`w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-white/5 transition-colors ${i === activeIndex ? 'bg-white/5' : ''
                                 }`}
                         >
                             <div>
@@ -140,7 +140,7 @@ const StockSearch = () => {
                     {!suggestions.some(s => s.ticker === query.toUpperCase()) && (
                         <button
                             onMouseDown={() => navigateTo(query)}
-                            className="w-full flex items-center space-x-2 px-4 py-2.5 text-left hover:bg-blue-600/20 border-t border-slate-700 transition-colors"
+                            className="w-full flex items-center space-x-2 px-4 py-2.5 text-left hover:bg-blue-500/10 border-t border-zinc-700/50 transition-colors"
                         >
                             <Search className="h-4 w-4 text-blue-400" />
                             <span className="text-blue-400 text-sm">Search "<strong>{query.toUpperCase()}</strong>"</span>

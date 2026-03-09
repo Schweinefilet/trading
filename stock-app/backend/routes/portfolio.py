@@ -1,7 +1,18 @@
 from flask import Blueprint, jsonify, request
 from models import PortfolioPosition, db
+from services.cache import CacheService
 
 portfolio_bp = Blueprint('portfolio', __name__)
+
+
+def _invalidate_portfolio_analytics_cache():
+    try:
+        # Invalidate all timeframe caches
+        for timeframe in ['3mo', '6mo', '1y', '2y']:
+            CacheService.delete('__portfolio__', 'portfolio_analytics', f'v1_{timeframe}')
+    except Exception:
+        # Keep write path resilient even if cache eviction fails.
+        pass
 
 @portfolio_bp.route('/portfolio')
 def get_portfolio():
@@ -47,6 +58,7 @@ def add_position():
         db.session.add(pos)
         
     db.session.commit()
+    _invalidate_portfolio_analytics_cache()
     return jsonify({'success': True})
 
 @portfolio_bp.route('/portfolio/<ticker>', methods=['DELETE', 'PUT'])
@@ -58,6 +70,7 @@ def manage_position(ticker):
     if request.method == 'DELETE':
         db.session.delete(pos)
         db.session.commit()
+        _invalidate_portfolio_analytics_cache()
         return jsonify({'success': True})
         
     if request.method == 'PUT':
@@ -65,4 +78,5 @@ def manage_position(ticker):
         pos.shares = float(data.get('shares', pos.shares))
         pos.avg_cost = float(data.get('avg_cost', pos.avg_cost))
         db.session.commit()
+        _invalidate_portfolio_analytics_cache()
         return jsonify({'success': True})

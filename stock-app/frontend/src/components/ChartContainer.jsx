@@ -411,6 +411,7 @@ const ChartContainer = ({
     const syncCrosshair = useCallback((param, sourceId) => {
         if (isSyncingCrosshair.current) return;
         isSyncingCrosshair.current = true;
+        const hasValidTime = param?.time !== undefined && param?.time !== null;
         Object.keys(paneRefs.current).forEach(id => {
             if (id === sourceId) return;
             const pane = paneRefs.current[id];
@@ -418,9 +419,16 @@ const ChartContainer = ({
             const chart = pane.getChart();
             const series = pane.getSeries();
             if (!chart || !series) return;
-            if (param?.time !== undefined && param?.point) {
+            if (!hasValidTime || !param?.point) {
+                chart.clearCrosshairPosition();
+                return;
+            }
+
+            try {
+                // Lightweight Charts can throw when crosshair payload is incomplete
+                // during rapid interval/data switches. Fail safe instead of crashing.
                 chart.setCrosshairPosition(0, param.time, series);
-            } else {
+            } catch {
                 chart.clearCrosshairPosition();
             }
         });

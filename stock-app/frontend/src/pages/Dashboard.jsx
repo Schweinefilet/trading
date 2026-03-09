@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import axios from 'axios';
 import { TrendingUp, TrendingDown, Clock, Plus, X, Check, ChevronDown, List } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip } from 'recharts';
 import ParticlesBg from '../components/ParticlesBg';
 
 // ── Market strip tickers ──────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ const DEFAULT_INDEXES  = ['^GSPC', '^IXIC', '^DJI', '^RUT', '^VIX', 'GC=F', 'SI=
 
 // ── Watchlist tab config ──────────────────────────────────────────────────────
 const WATCHLIST_TABS = [
+    { id: 'portfolio', label: 'Portfolio', storageKey: null, defaultList: [] },
     { id: 'main',     label: 'Watchlist',  storageKey: 'tradr_watchlist_main',     defaultList: DEFAULT_MAIN },
     { id: 'extended', label: 'Extended',   storageKey: 'tradr_watchlist_extended',  defaultList: DEFAULT_EXTENDED },
     { id: 'indexes',  label: 'Indexes',    storageKey: 'tradr_watchlist_indexes',   defaultList: DEFAULT_INDEXES },
@@ -98,6 +100,155 @@ const getMACDCross = (indData) => {
         if (p >= 0 && c < 0) return -1;
     }
     return 0;
+};
+
+// ── Market Indices Chart ──────────────────────────────────────────────────────
+const INDICES = [
+    { ticker: '^GSPC', label: 'S&P 500' },
+    { ticker: '^IXIC', label: 'NASDAQ' },
+    { ticker: '^DJI', label: 'DOW' },
+];
+
+const TIMEFRAMES = [
+    { value: '1d', label: '1D', period: '1d', interval: '5m' },
+    { value: '1w', label: '1W', period: '5d', interval: '1h' },
+    { value: '1m', label: '1M', period: '1mo', interval: '1d' },
+    { value: '3m', label: '3M', period: '3mo', interval: '1d' },
+    { value: '6m', label: '6M', period: '6mo', interval: '1d' },
+    { value: '1y', label: '1Y', period: '1y', interval: '1d' },
+];
+
+const MarketIndicesChart = () => {
+    const [selectedIndex, setSelectedIndex] = useState('^GSPC'); // S&P 500
+    const [selectedTimeframe, setSelectedTimeframe] = useState('6m'); // 6 months
+    const [chartData, setChartData] = useState([]);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            setLoading(true);
+            try {
+                const tf = TIMEFRAMES.find(t => t.value === selectedTimeframe);
+                const response = await axios.get(`/api/stock/${selectedIndex}/history`, {
+                    params: { period: tf.period, interval: tf.interval }
+                });
+                
+                const formatted = response.data.map(item => ({
+                    date: item.date,
+                    shortDate: String(item.date).slice(5, 10),
+                    close: item.close,
+                })).filter(d => d.close != null);
+                
+                setChartData(formatted);
+            } catch (error) {
+                console.error('Error fetching index data:', error);
+                setChartData([]);
+            } finally {
+                setLoading(false);
+            }
+        };
+        
+        fetchData();
+    }, [selectedIndex, selectedTimeframe]);
+
+    const currentIndex = INDICES.find(idx => idx.ticker === selectedIndex);
+
+    return (
+        <div className="glass overflow-hidden relative" style={{ padding: '24px' }}>
+            <div className="relative z-10">
+                <h2 className="font-medium flex items-center mb-4" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                    <TrendingUp className="h-4 w-4 mr-2" style={{ color: 'var(--accent)' }} />
+                    Market Indices
+                </h2>
+
+                {/* Index Selector */}
+                <div className="flex items-center gap-2 mb-4">
+                    {INDICES.map(idx => (
+                        <button
+                            key={idx.ticker}
+                            onClick={() => setSelectedIndex(idx.ticker)}
+                            className="text-sm font-bold px-3 py-1.5 rounded-lg transition-all"
+                            style={{
+                                background: selectedIndex === idx.ticker ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
+                                color: selectedIndex === idx.ticker ? '#000' : 'var(--text-secondary)',
+                                border: selectedIndex === idx.ticker ? 'none' : '1px solid rgba(255,255,255,0.12)'
+                            }}
+                        >
+                            {idx.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Timeframe Selector */}
+                <div className="flex items-center gap-1.5 mb-4">
+                    {TIMEFRAMES.map(tf => (
+                        <button
+                            key={tf.value}
+                            onClick={() => setSelectedTimeframe(tf.value)}
+                            className="text-xs font-bold px-2.5 py-1 rounded-lg transition-all"
+                            style={{
+                                background: selectedTimeframe === tf.value ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
+                                color: selectedTimeframe === tf.value ? '#000' : 'var(--text-secondary)',
+                                border: selectedTimeframe === tf.value ? 'none' : '1px solid rgba(255,255,255,0.12)'
+                            }}
+                        >
+                            {tf.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Chart */}
+                <div className="h-64">
+                    {loading ? (
+                        <div className="flex items-center justify-center h-full">
+                            <span className="text-sm animate-pulse" style={{ color: 'var(--text-tertiary)' }}>Loading...</span>
+                        </div>
+                    ) : chartData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                                <XAxis 
+                                    dataKey="shortDate" 
+                                    tick={{ fill: '#8b95a5', fontSize: 11 }} 
+                                    axisLine={false} 
+                                    tickLine={false} 
+                                />
+                                <YAxis
+                                    tick={{ fill: '#8b95a5', fontSize: 11 }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                    width={80}
+                                    domain={['auto', 'auto']}
+                                    tickFormatter={(v) => `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                                />
+                                <RechartsTooltip
+                                    formatter={(v) => [`${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, currentIndex?.label]}
+                                    labelFormatter={(l, payload) => payload?.[0]?.payload?.date || l}
+                                    contentStyle={{
+                                        background: 'rgba(0,0,0,0.9)',
+                                        border: '1px solid rgba(255,255,255,0.15)',
+                                        borderRadius: '10px',
+                                        color: '#fff',
+                                    }}
+                                />
+                                <Line 
+                                    type="monotone" 
+                                    dataKey="close" 
+                                    stroke="var(--accent)" 
+                                    strokeWidth={2.5} 
+                                    dot={false} 
+                                    isAnimationActive={false} 
+                                />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    ) : (
+                        <div className="flex items-center justify-center h-full">
+                            <span className="text-sm" style={{ color: 'var(--text-tertiary)' }}>No data available</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
 };
 
 // ── Market Strip ──────────────────────────────────────────────────────────────
@@ -212,21 +363,16 @@ const MarketStrip = () => {
 };
 
 // ── Watchlist Card ────────────────────────────────────────────────────────────
-const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
-    const [quote, setQuote] = useState(quoteProp || null);
-    const [loading, setLoading] = useState(!quoteProp);
-
-    useEffect(() => {
-        if (quoteProp) { setQuote(quoteProp); setLoading(false); return; }
-        setLoading(true);
-        axios.get(`/api/stock/${encodeURIComponent(ticker)}/quote`)
-            .then(r => setQuote(r.data))
-            .catch(() => {})
-            .finally(() => setLoading(false));
-    }, [ticker, quoteProp]);
+const WatchlistCard = ({ ticker, onRemove, quote, indData, chartData, showChart = false, allowRemove = true, loading = false }) => {
 
     if (loading) return <div className="glass animate-pulse h-28" />;
-    if (!quote) return null;
+    if (!quote) {
+        return (
+            <div className="glass h-28 flex items-center justify-center" style={{ borderRadius: '16px' }}>
+                <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>No data yet</span>
+            </div>
+        );
+    }
 
     const isPositive = (quote.change ?? 0) >= 0;
     const rsi = getRSI(indData);
@@ -235,14 +381,16 @@ const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
 
     return (
         <div className="glass flex flex-col justify-between group relative" style={{ padding: '18px', borderRadius: '16px' }}>
-            <button
-                onClick={(e) => { e.preventDefault(); onRemove(ticker); }}
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-all z-10"
-                style={{ color: 'var(--text-tertiary)' }}
-                title="Remove"
-            >
-                <X className="h-3.5 w-3.5" />
-            </button>
+            {allowRemove && (
+                <button
+                    onClick={(e) => { e.preventDefault(); onRemove(ticker); }}
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-all z-10"
+                    style={{ color: 'var(--text-tertiary)' }}
+                    title="Remove"
+                >
+                    <X className="h-3.5 w-3.5" />
+                </button>
+            )}
             <Link to={`/stock/${ticker}`} className="flex flex-col justify-between h-full">
                 <div className="flex justify-between items-start">
                     <div className="min-w-0 flex-1 pr-2">
@@ -293,6 +441,22 @@ const WatchlistCard = ({ ticker, onRemove, quote: quoteProp, indData }) => {
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,69,58,0.15)', color: 'var(--negative)', borderRadius: '6px', padding: '2px 6px', fontSize: '0.7rem' }}>MACD ↓</span>
                     )}
                 </div>
+                {showChart && Array.isArray(chartData) && chartData.length > 1 && (
+                    <div className="mt-2 h-10">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                                <Line
+                                    type="monotone"
+                                    dataKey="close"
+                                    stroke={isPositive ? 'var(--positive)' : 'var(--negative)'}
+                                    strokeWidth={1.6}
+                                    dot={false}
+                                    isAnimationActive={false}
+                                />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                )}
             </Link>
         </div>
     );
@@ -404,11 +568,16 @@ const WatchlistModal = ({ title, watchlist, onClose, onSave }) => {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 const Dashboard = () => {
     const [portfolio, setPortfolio] = useState(null);
+    const [portfolioTimeframe, setPortfolioTimeframe] = useState('1y');
 
     // Load all three watchlists from localStorage
     const [watchlists, setWatchlists] = useState(() => {
         const result = {};
         for (const tab of WATCHLIST_TABS) {
+            if (!tab.storageKey) {
+                result[tab.id] = tab.defaultList;
+                continue;
+            }
             try {
                 const saved = localStorage.getItem(tab.storageKey);
                 result[tab.id] = saved ? JSON.parse(saved) : tab.defaultList;
@@ -424,42 +593,94 @@ const Dashboard = () => {
     const [sortBy, setSortBy] = useState('pct_desc');
     const [quotesMap, setQuotesMap] = useState({});
     const [indicatorsMap, setIndicatorsMap] = useState({});
+    const [miniChartsMap, setMiniChartsMap] = useState({});
+    const [loadingMap, setLoadingMap] = useState({});
+    const pendingRef = useRef(new Set());
 
-    const watchlist = watchlists[activeTab] ?? [];
+    const portfolioTabTickers = useMemo(() => {
+        const holdings = Array.isArray(portfolio?.holdings) ? portfolio.holdings : [];
+        const seen = new Set();
+        return holdings
+            .map(h => String(h?.ticker || '').toUpperCase())
+            .filter(t => t && !seen.has(t) && seen.add(t));
+    }, [portfolio]);
+
+    const watchlist = activeTab === 'portfolio' ? portfolioTabTickers : (watchlists[activeTab] ?? []);
     const activeTabConfig = WATCHLIST_TABS.find(t => t.id === activeTab);
 
     useEffect(() => {
-        axios.get('/api/portfolio/analytics')
+        axios.get('/api/portfolio/analytics', {
+            params: { timeframe: portfolioTimeframe }
+        })
             .then(r => setPortfolio(r.data))
             .catch(() => {});
-    }, []);
-
-    // Fetch quotes + indicators for all tickers across all watchlists (deduplicated)
-    const allTickers = useMemo(() => {
-        const set = new Set();
-        for (const tab of WATCHLIST_TABS) {
-            for (const t of (watchlists[tab.id] ?? [])) set.add(t);
-        }
-        return [...set];
-    }, [watchlists]);
+    }, [portfolioTimeframe]);
 
     useEffect(() => {
-        if (allTickers.length === 0) return;
-        allTickers.forEach(ticker => {
-            // Skip if already fetched
-            if (quotesMap[ticker]) return;
-            const enc = encodeURIComponent(ticker);
-            axios.get(`/api/stock/${enc}/quote`)
-                .then(r => setQuotesMap(prev => ({ ...prev, [ticker]: r.data })))
-                .catch(() => {});
-            axios.get(`/api/stock/${enc}/indicators?period=3mo&interval=1d&indicators=rsi,macd`)
-                .then(r => setIndicatorsMap(prev => ({ ...prev, [ticker]: Array.isArray(r.data) ? r.data : [] })))
-                .catch(() => {});
+        const activeTickers = watchlist;
+        if (activeTickers.length === 0) return;
+
+        const originalIndex = new Map(activeTickers.map((t, i) => [t, i]));
+        const ordered = [...activeTickers].sort((a, b) => {
+            if (activeTab !== 'extended') {
+                return (originalIndex.get(a) ?? 0) - (originalIndex.get(b) ?? 0);
+            }
+
+            const capA = Number(quotesMap[a]?.market_cap);
+            const capB = Number(quotesMap[b]?.market_cap);
+            const hasA = Number.isFinite(capA);
+            const hasB = Number.isFinite(capB);
+
+            if (hasA && hasB && capA !== capB) return capB - capA;
+            if (hasA && !hasB) return -1;
+            if (!hasA && hasB) return 1;
+            return (originalIndex.get(a) ?? 0) - (originalIndex.get(b) ?? 0);
         });
-    }, [allTickers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+        const toFetch = ordered.filter((ticker) => {
+            const needsQuote = !quotesMap[ticker];
+            const needsIndicators = !indicatorsMap[ticker];
+            return (needsQuote || needsIndicators) && !pendingRef.current.has(ticker);
+        });
+
+        if (toFetch.length === 0) return;
+
+        const CONCURRENCY = 4;
+        let cursor = 0;
+
+        const worker = async () => {
+            while (cursor < toFetch.length) {
+                const index = cursor;
+                cursor += 1;
+                const ticker = toFetch[index];
+                pendingRef.current.add(ticker);
+                setLoadingMap(prev => ({ ...prev, [ticker]: true }));
+
+                const enc = encodeURIComponent(ticker);
+                try {
+                    const [quoteRes, indRes] = await Promise.all([
+                        axios.get(`/api/stock/${enc}/quote`),
+                        axios.get(`/api/stock/${enc}/indicators?period=3mo&interval=1d&indicators=rsi,macd`),
+                    ]);
+                    setQuotesMap(prev => ({ ...prev, [ticker]: quoteRes.data }));
+                    setIndicatorsMap(prev => ({ ...prev, [ticker]: Array.isArray(indRes.data) ? indRes.data : [] }));
+                } catch {
+                    // Leave card in 'no data yet' state on transient failures.
+                } finally {
+                    pendingRef.current.delete(ticker);
+                    setLoadingMap(prev => ({ ...prev, [ticker]: false }));
+                }
+            }
+        };
+
+        const workers = Array.from({ length: Math.min(CONCURRENCY, toFetch.length) }, () => worker());
+        Promise.all(workers).catch(() => {});
+    }, [watchlist, activeTab, quotesMap, indicatorsMap]);
 
     const saveWatchlist = useCallback((newList) => {
+        if (activeTab === 'portfolio') return;
         const tab = WATCHLIST_TABS.find(t => t.id === activeTab);
+        if (!tab?.storageKey) return;
         setWatchlists(prev => ({ ...prev, [activeTab]: newList }));
         localStorage.setItem(tab.storageKey, JSON.stringify(newList));
     }, [activeTab]);
@@ -509,6 +730,60 @@ const Dashboard = () => {
         });
     }, [watchlist, sortBy, quotesMap, indicatorsMap]);
 
+    const top12ForMiniCharts = useMemo(() => {
+        return [...watchlist]
+            .sort((a, b) => (quotesMap[b]?.percent_change ?? -Infinity) - (quotesMap[a]?.percent_change ?? -Infinity))
+            .slice(0, 12);
+    }, [watchlist, quotesMap]);
+
+    useEffect(() => {
+        const toFetch = top12ForMiniCharts.filter((ticker) => !miniChartsMap[ticker]);
+        if (toFetch.length === 0) return;
+
+        const CONCURRENCY = 4;
+        let cursor = 0;
+
+        const worker = async () => {
+            while (cursor < toFetch.length) {
+                const i = cursor;
+                cursor += 1;
+                const ticker = toFetch[i];
+                try {
+                    const res = await axios.get(`/api/stock/${encodeURIComponent(ticker)}/history`, {
+                        params: { period: '1d', interval: '5m' }
+                    });
+                    const series = Array.isArray(res.data)
+                        ? res.data
+                            .map((d) => ({ close: Number(d?.close) }))
+                            .filter((d) => Number.isFinite(d.close))
+                        : [];
+                    setMiniChartsMap((prev) => ({ ...prev, [ticker]: series }));
+                } catch {
+                    setMiniChartsMap((prev) => ({ ...prev, [ticker]: [] }));
+                }
+            }
+        };
+
+        const workers = Array.from({ length: Math.min(CONCURRENCY, toFetch.length) }, () => worker());
+        Promise.all(workers).catch(() => {});
+    }, [top12ForMiniCharts, miniChartsMap]);
+
+    const portfolioValueHistory = useMemo(() => {
+        const series = Array.isArray(portfolio?.value_history) ? portfolio.value_history : [];
+        return series
+            .map((p) => {
+                const value = Number(p?.value);
+                const date = p?.date;
+                if (!Number.isFinite(value) || !date) return null;
+                return {
+                    date,
+                    shortDate: String(date).slice(5, 10),
+                    value,
+                };
+            })
+            .filter(Boolean);
+    }, [portfolio]);
+
     return (
         <>
         <ParticlesBg canvasId="particles-dashboard" />
@@ -516,10 +791,10 @@ const Dashboard = () => {
             {/* Market Strip */}
             <MarketStrip />
 
-            {/* Portfolio + CTA */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Portfolio + Market Indices */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Portfolio Overview card */}
-                <div className="glass md:col-span-2 overflow-hidden relative" style={{ padding: '24px' }}>
+                <div className="glass overflow-hidden relative" style={{ padding: '24px' }}>
                     <div className="relative z-10">
                         <h2 className="font-medium flex items-center" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                             <Clock className="h-4 w-4 mr-2" style={{ color: 'var(--accent)' }} />
@@ -547,28 +822,60 @@ const Dashboard = () => {
                                 <p className="text-sm mt-1 uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Percentage</p>
                             </div>
                         </div>
+
+                        {portfolioValueHistory.length > 1 && (
+                            <>
+                                <div className="flex items-center justify-between mt-5 mb-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
+                                    <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Value History</span>
+                                    <div className="flex items-center gap-1.5">
+                                        {['3mo', '6mo', '1y', '2y'].map(tf => (
+                                            <button
+                                                key={tf}
+                                                onClick={() => setPortfolioTimeframe(tf)}
+                                                className="text-xs font-bold px-2.5 py-1 rounded-lg transition-all"
+                                                style={{
+                                                    background: portfolioTimeframe === tf ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
+                                                    color: portfolioTimeframe === tf ? '#000' : 'var(--text-secondary)',
+                                                    border: portfolioTimeframe === tf ? 'none' : '1px solid rgba(255,255,255,0.12)'
+                                                }}
+                                            >
+                                                {tf === '3mo' ? '3M' : tf === '6mo' ? '6M' : tf === '1y' ? '1Y' : '2Y'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="h-44">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={portfolioValueHistory}>
+                                        <XAxis dataKey="shortDate" tick={{ fill: '#8b95a5', fontSize: 11 }} axisLine={false} tickLine={false} />
+                                        <YAxis
+                                            tick={{ fill: '#8b95a5', fontSize: 11 }}
+                                            axisLine={false}
+                                            tickLine={false}
+                                            width={80}
+                                            tickFormatter={(v) => `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                                        />
+                                        <RechartsTooltip
+                                            formatter={(v) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, 'Value']}
+                                            labelFormatter={(l, payload) => payload?.[0]?.payload?.date || l}
+                                            contentStyle={{
+                                                background: 'rgba(0,0,0,0.9)',
+                                                border: '1px solid rgba(255,255,255,0.15)',
+                                                borderRadius: '10px',
+                                                color: '#fff',
+                                            }}
+                                        />
+                                        <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 
-                {/* CTA card */}
-                <div className="glass flex flex-col justify-center items-center text-center" style={{ padding: '32px' }}>
-                    <p className="mb-6" style={{ color: 'var(--text-secondary)' }}>Start managing and tracking your investments today.</p>
-                    <Link
-                        to="/portfolio"
-                        className="w-full text-center font-semibold transition-all"
-                        style={{
-                            background: 'var(--accent)',
-                            borderRadius: 'var(--radius-btn)',
-                            color: '#000',
-                            border: 'none',
-                            padding: '12px 28px',
-                            fontWeight: 600,
-                            display: 'block',
-                        }}
-                    >
-                        View My Portfolio
-                    </Link>
-                </div>
+                {/* Market Indices Chart */}
+                <MarketIndicesChart />
             </div>
 
             {/* Watchlist section */}
@@ -596,7 +903,7 @@ const Dashboard = () => {
                                         : { background: 'rgba(255,255,255,0.08)', color: 'var(--text-tertiary)' }
                                     }
                                 >
-                                    {(watchlists[tab.id] ?? []).length}
+                                    {tab.id === 'portfolio' ? portfolioTabTickers.length : (watchlists[tab.id] ?? []).length}
                                 </span>
                             </button>
                         ))}
@@ -605,13 +912,15 @@ const Dashboard = () => {
                     {/* Right controls */}
                     <div className="flex items-center gap-4">
                         <SortDropdown value={sortBy} onChange={setSortBy} />
-                        <button
-                            onClick={() => setShowCustomize(true)}
-                            className="text-sm font-medium hover:underline transition-colors"
-                            style={{ color: 'var(--text-secondary)' }}
-                        >
-                            Customize
-                        </button>
+                        {activeTab !== 'portfolio' && (
+                            <button
+                                onClick={() => setShowCustomize(true)}
+                                className="text-sm font-medium hover:underline transition-colors"
+                                style={{ color: 'var(--text-secondary)' }}
+                            >
+                                Customize
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -624,6 +933,10 @@ const Dashboard = () => {
                             onRemove={removeFromWatchlist}
                             quote={quotesMap[ticker]}
                             indData={indicatorsMap[ticker]}
+                            chartData={miniChartsMap[ticker]}
+                            showChart={top12ForMiniCharts.includes(ticker)}
+                            allowRemove={activeTab !== 'portfolio'}
+                            loading={!!loadingMap[ticker]}
                         />
                     ))}
                     {watchlist.length === 0 && (
@@ -631,14 +944,15 @@ const Dashboard = () => {
                             onClick={() => setShowCustomize(true)}
                             className="col-span-full flex items-center justify-center gap-2 py-12 rounded-xl transition-colors"
                             style={{ border: '1.5px dashed rgba(255,255,255,0.20)', color: 'var(--text-tertiary)' }}
+                            disabled={activeTab === 'portfolio'}
                         >
-                            <Plus className="h-5 w-5" /> Add stocks to {activeTabConfig?.label}
+                            <Plus className="h-5 w-5" /> {activeTab === 'portfolio' ? 'No portfolio holdings yet' : `Add stocks to ${activeTabConfig?.label}`}
                         </button>
                     )}
                 </div>
             </section>
 
-            {showCustomize && (
+            {showCustomize && activeTab !== 'portfolio' && (
                 <WatchlistModal
                     title={activeTabConfig?.label ?? 'Watchlist'}
                     watchlist={watchlist}

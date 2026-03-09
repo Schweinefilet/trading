@@ -1,9 +1,9 @@
 /* ── iOS 26 Liquid Glass Design System ─────────────────────── */
 :root {
   --glass-fill:        rgba(255, 255, 255, 0.08);
-  --glass-fill-hover:  rgba(255, 255, 255, 0.16);
-  --glass-border:      rgba(255, 255, 255, 0.24);
-  --glass-blur:        blur(8px) saturate(180%);
+  --glass-fill-hover:  rgba(255, 255, 255, 0.12);
+  --glass-border:      rgba(255, 255, 255, 0.18);
+  --glass-blur:        blur(6px) saturate(50%);
   --glass-shadow:      0 8px 32px rgba(0, 0, 0, 0.25);
   --glass-specular:    inset 0 1px 0 rgba(255, 255, 255, 0.14);
   --radius-card:       20px;
@@ -129,7 +129,7 @@ h3 { font-size: 1.1rem;  font-weight: 600; color: rgba(255,255,255,0.9); }
 ::-webkit-scrollbar       { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.28); }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
 
 /* ── Legacy utilities (kept for compatibility) ──────────────── */
 @import "tailwindcss";

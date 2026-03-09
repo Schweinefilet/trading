@@ -1,6 +1,7 @@
 import yfinance as yf
 import finnhub
 import os
+import time
 import pandas as pd
 from .cache import CacheService
 from dotenv import load_dotenv
@@ -54,7 +55,8 @@ class DataFetcher:
                         'low': quote['l'],
                         'open': quote['o'],
                         'prev_close': quote['pc'],
-                        'timestamp': quote['t']
+                        'timestamp': quote['t'],
+                        'market_cap': None,
                     }
                     res = self._enrich_quote_metadata(ticker, res)
                     CacheService.set(ticker, 'quote', res)
@@ -66,16 +68,29 @@ class DataFetcher:
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
+            
+            # Prefer extended hours price if available (most recent)
+            current_price = (
+                info.get('postMarketPrice') or  # After-hours price
+                info.get('currentPrice') or      # Current/live price
+                info.get('regularMarketPrice')   # Regular hours close
+            )
+            
+            # Use post-market change if available, otherwise regular market change
+            change = info.get('postMarketChange') or info.get('regularMarketChange')
+            change_percent = info.get('postMarketChangePercent') or info.get('regularMarketChangePercent')
+            
             res = {
                 'ticker': ticker,
-                'current_price': info.get('currentPrice', info.get('regularMarketPrice')),
-                'change': info.get('regularMarketChange'),
-                'percent_change': info.get('regularMarketChangePercent'),
+                'current_price': current_price,
+                'change': change,
+                'percent_change': change_percent,
                 'high': info.get('dayHigh'),
                 'low': info.get('dayLow'),
                 'open': info.get('regularMarketOpen'),
                 'prev_close': info.get('previousClose'),
                 'timestamp': info.get('regularMarketTime'),
+                'market_cap': info.get('marketCap'),
                 'longName': info.get('longName', ticker),
                 'sector': info.get('sector'),
                 'industry': info.get('industry'),
@@ -98,6 +113,8 @@ class DataFetcher:
                     res['longName'] = res.get('longName') or f.get('longName') or ticker
                     res['sector'] = res.get('sector') or f.get('sector')
                     res['industry'] = res.get('industry') or f.get('industry')
+                    if not res.get('market_cap'):
+                        res['market_cap'] = f.get('market_cap')
             except Exception:
                 pass
 
@@ -119,30 +136,38 @@ class DataFetcher:
         if data:
             return data
 
-        try:
-            stock = yf.Ticker(ticker)
-            history = stock.history(period=period, interval=interval, prepost=intraday)
-            if history.empty:
+        for attempt in range(3):
+            try:
+                stock = yf.Ticker(ticker)
+                history = stock.history(period=period, interval=interval, prepost=intraday)
+                if history.empty:
+                    return None
+                # Convert DF to list of dicts for JSON storage
+                res = history.reset_index()
+
+                # yfinance returns 'Date' for daily+, and 'Datetime' for intraday
+                if 'Datetime' in res.columns:
+                    res = res.rename(columns={'Datetime': 'Date'})
+
+                # Format time appropriately based on interval
+                if interval in ['1d', '1wk', '1mo']:
+                    res['Date'] = res['Date'].dt.strftime('%Y-%m-%d')
+                else:
+                    res['Date'] = res['Date'].dt.strftime('%Y-%m-%d %H:%M')
+
+                data_list = res.to_dict(orient='records')
+                CacheService.set(ticker, 'history', data_list, key_params)
+                return data_list
+            except Exception as e:
+                msg = str(e).lower()
+                is_rate_limited = ('429' in msg) or ('too many requests' in msg) or ('rate limit' in msg)
+                if is_rate_limited and attempt < 2:
+                    wait_s = 0.7 * (2 ** attempt)
+                    time.sleep(wait_s)
+                    continue
+
+                print(f"History error for {ticker}: {e}")
                 return None
-            # Convert DF to list of dicts for JSON storage
-            res = history.reset_index()
-            
-            # yfinance returns 'Date' for daily+, and 'Datetime' for intraday
-            if 'Datetime' in res.columns:
-                res = res.rename(columns={'Datetime': 'Date'})
-            
-            # Format time appropriately based on interval
-            if interval in ['1d', '1wk', '1mo']:
-                res['Date'] = res['Date'].dt.strftime('%Y-%m-%d')
-            else:
-                res['Date'] = res['Date'].dt.strftime('%Y-%m-%d %H:%M')
-                
-            data_list = res.to_dict(orient='records')
-            CacheService.set(ticker, 'history', data_list, key_params)
-            return data_list
-        except Exception as e:
-            print(f"History error for {ticker}: {e}")
-            return None
 
     def get_fundamentals(self, ticker):
         data = CacheService.get(ticker, 'fundamentals')

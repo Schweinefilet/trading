@@ -9,6 +9,7 @@ import { TrendingUp, TrendingDown, Target, Shield, Trash2, Pencil, Check, X, Plu
 import { Link } from 'react-router-dom';
 import ParticlesBg from '../components/ParticlesBg';
 import BrokerageManager from '../components/BrokerageManager';
+import StockIndicatorsModal from '../components/StockIndicatorsModal';
 import { useBrokerageSync } from '../hooks/useBrokerageSync';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
@@ -23,7 +24,7 @@ const MetricCard = ({ icon: Icon, label, value, color }) => (
     </div>
 );
 
-const EditableRow = ({ holding, onDelete, onUpdate }) => {
+const EditableRow = ({ holding, onDelete, onUpdate, onRowClick }) => {
     const [editing, setEditing] = useState(false);
     const [shares, setShares] = useState(holding.shares);
     const [cost, setCost] = useState(holding.avg_cost);
@@ -38,13 +39,22 @@ const EditableRow = ({ holding, onDelete, onUpdate }) => {
 
     return (
         <tr
-            className="transition-colors"
+            className="transition-colors cursor-pointer"
             style={{
                 borderBottom: '1px solid rgba(255,255,255,0.07)',
-                background: hovered ? 'rgba(255,255,255,0.05)' : 'transparent',
+                background: hovered ? 'rgba(255,255,255,0.02)' : 'transparent',
             }}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
+            onClick={(e) => {
+                // Don't trigger row click if clicking on action buttons or input fields
+                if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a')) {
+                    return;
+                }
+                if (onRowClick) {
+                    onRowClick(holding.ticker);
+                }
+            }}
         >
             <td className="py-4 px-3">
                 <Link
@@ -490,7 +500,7 @@ function relativeTime(isoString) {
     return `${Math.floor(diff / 86400)}d ago`;
 }
 
-const SyncedHoldingsSection = ({ accounts, positions, accountFilter, onFilterChange }) => {
+const SyncedHoldingsSection = ({ accounts, positions, accountFilter, onFilterChange, onRowClick }) => {
     const hasAccounts = accounts.length > 0;
     const hasPositions = positions.length > 0;
 
@@ -585,8 +595,17 @@ const SyncedHoldingsSection = ({ accounts, positions, accountFilter, onFilterCha
                                 return (
                                     <tr
                                         key={p.id}
-                                        className="transition-colors"
+                                        className="transition-colors cursor-pointer"
                                         style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                                        onClick={(e) => {
+                                            // Don't trigger row click if clicking on link
+                                            if (e.target.closest('a')) {
+                                                return;
+                                            }
+                                            if (onRowClick) {
+                                                onRowClick(p.ticker);
+                                            }
+                                        }}
                                     >
                                         <td className="py-3 px-3">
                                             <Link
@@ -657,14 +676,25 @@ const Portfolio = () => {
     const [allocationMode, setAllocationMode] = useState('ticker');
     const [showAllRiskMetrics, setShowAllRiskMetrics] = useState(false);
     const [syncedAccountFilter, setSyncedAccountFilter] = useState('all');
+    const [selectedTicker, setSelectedTicker] = useState(null);
+    const [valueHistoryTimeframe, setValueHistoryTimeframe] = useState('1y');
 
     // Brokerage sync state (shared hook)
-    const brokerage = useBrokerageSync();
+    const brokerage = useBrokerageSync({ lazy: true });
 
-    const fetchPortfolio = useCallback(async () => {
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            brokerage.start();
+        }, 700);
+        return () => clearTimeout(timer);
+    }, [brokerage.start]);
+
+    const fetchPortfolio = useCallback(async (timeframe = '1y') => {
         setLoading(true);
         try {
-            const res = await axios.get('/api/portfolio/analytics');
+            const res = await axios.get('/api/portfolio/analytics', {
+                params: { timeframe }
+            });
             setData(res.data);
         } catch (e) {
             console.error(e);
@@ -673,21 +703,22 @@ const Portfolio = () => {
         }
     }, []);
 
-    useEffect(() => { fetchPortfolio(); }, [fetchPortfolio]);
+    useEffect(() => { fetchPortfolio(valueHistoryTimeframe); }, [fetchPortfolio, valueHistoryTimeframe]);
 
     const handleDelete = async (ticker) => {
         if (!window.confirm(`Remove ${ticker} from portfolio?`)) return;
-        try { await axios.delete(`/api/portfolio/${ticker}`); fetchPortfolio(); } catch (e) { console.error(e); }
+        try { await axios.delete(`/api/portfolio/${ticker}`); fetchPortfolio(valueHistoryTimeframe); } catch (e) { console.error(e); }
     };
 
     const handleUpdate = async (ticker, shares, avg_cost) => {
-        try { await axios.put(`/api/portfolio/${ticker}`, { shares, avg_cost }); fetchPortfolio(); } catch (e) { console.error(e); }
+        try { await axios.put(`/api/portfolio/${ticker}`, { shares, avg_cost }); fetchPortfolio(valueHistoryTimeframe); } catch (e) { console.error(e); }
     };
 
-    const { summary, holdings, risk, correlation } = data || { summary: {}, holdings: [], risk: {}, correlation: {} };
+    const { summary, holdings, value_history, risk, correlation } = data || { summary: {}, holdings: [], value_history: [], risk: {}, correlation: {} };
     const safeSummary = (summary && typeof summary === 'object') ? summary : {};
     const safeRisk = (risk && typeof risk === 'object') ? risk : {};
     const safeHoldings = Array.isArray(holdings) ? holdings : [];
+    const safeValueHistory = Array.isArray(value_history) ? value_history : [];
     const safeCorrelation = (correlation && typeof correlation === 'object') ? correlation : {};
 
     const isEmpty = safeHoldings.length === 0;
@@ -721,6 +752,21 @@ const Portfolio = () => {
             }))
             .sort((a, b) => b.value - a.value);
     }, [safeHoldings, allocationMode]);
+
+    const valueHistoryChartData = useMemo(() => {
+        return safeValueHistory
+            .map((p) => {
+                const value = Number(p?.value);
+                const date = p?.date;
+                if (!Number.isFinite(value) || !date) return null;
+                return {
+                    date,
+                    shortDate: String(date).slice(5, 10),
+                    value,
+                };
+            })
+            .filter(Boolean);
+    }, [safeValueHistory]);
 
     const riskItems = [
         {
@@ -889,6 +935,58 @@ const Portfolio = () => {
                 </div>
             )}
 
+            {!isEmpty && valueHistoryChartData.length > 1 && (
+                <div className="glass p-5">
+                    <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+                        <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
+                            Portfolio Value Over Time
+                        </h3>
+                        <div className="flex items-center gap-2">
+                            {['3mo', '6mo', '1y', '2y'].map(tf => (
+                                <button
+                                    key={tf}
+                                    onClick={() => setValueHistoryTimeframe(tf)}
+                                    className="text-xs font-bold px-3 py-1.5 rounded-lg transition-all"
+                                    style={{
+                                        background: valueHistoryTimeframe === tf ? 'var(--accent)' : 'rgba(255,255,255,0.08)',
+                                        color: valueHistoryTimeframe === tf ? '#000' : 'var(--text-secondary)',
+                                        border: valueHistoryTimeframe === tf ? 'none' : '1px solid rgba(255,255,255,0.12)'
+                                    }}
+                                >
+                                    {tf === '3mo' ? '3M' : tf === '6mo' ? '6M' : tf === '1y' ? '1Y' : '2Y'}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="h-64 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={valueHistoryChartData}>
+                                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                                <XAxis dataKey="shortDate" tick={{ fill: '#8b95a5', fontSize: 11 }} axisLine={false} tickLine={false} />
+                                <YAxis
+                                    tick={{ fill: '#8b95a5', fontSize: 11 }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                    width={84}
+                                    tickFormatter={(v) => `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                                />
+                                <RechartsTooltip
+                                    formatter={(v) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, 'Portfolio Value']}
+                                    labelFormatter={(l, payload) => payload?.[0]?.payload?.date || l}
+                                    contentStyle={{
+                                        background: 'rgba(0,0,0,0.9)',
+                                        border: '1px solid rgba(255,255,255,0.15)',
+                                        borderRadius: '10px',
+                                        color: '#fff',
+                                    }}
+                                />
+                                <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            )}
+
             {isEmpty ? (
                 /* Empty State */
                 <div className="space-y-8">
@@ -1052,6 +1150,7 @@ const Portfolio = () => {
                                             holding={h}
                                             onDelete={handleDelete}
                                             onUpdate={handleUpdate}
+                                            onRowClick={setSelectedTicker}
                                         />
                                     ))}
                                 </tbody>
@@ -1080,6 +1179,7 @@ const Portfolio = () => {
                         positions={brokerage.positions}
                         accountFilter={syncedAccountFilter}
                         onFilterChange={setSyncedAccountFilter}
+                        onRowClick={setSelectedTicker}
                     />
 
                     {/* Correlation Heatmap */}
@@ -1151,6 +1251,10 @@ const Portfolio = () => {
 
             {showAddModal && (
                 <AddPositionModal onClose={() => setShowAddModal(false)} onAdded={fetchPortfolio} />
+            )}
+
+            {selectedTicker && (
+                <StockIndicatorsModal ticker={selectedTicker} onClose={() => setSelectedTicker(null)} />
             )}
         </div>
         </>

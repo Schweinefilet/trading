@@ -10,7 +10,7 @@ class PortfolioAnalytics:
         self.positions = positions
         self.fetcher = DataFetcher()
 
-    def get_all_metrics(self):
+    def get_all_metrics(self, timeframe='1y'):
         if not self.positions:
             return {
                 'summary': {
@@ -19,14 +19,19 @@ class PortfolioAnalytics:
                     'total_gain_loss_pct': 0,
                 },
                 'holdings': [],
+                'value_history': [],
                 'risk': {},
                 'correlation': {}
             }
 
-        basic = self.get_basic_metrics()
-        risk = self.get_risk_metrics(basic['holdings'])
-        correlation = self.get_correlation_matrix()
-        
+        tickers = [p['ticker'] for p in self.positions]
+        returns_map = self._build_returns_map(tickers + ['SPY'], period=timeframe)
+
+        basic = self.get_basic_metrics(returns_map=returns_map)
+        risk = self.get_risk_metrics(basic['holdings'], returns_map=returns_map)
+        correlation = self.get_correlation_matrix(returns_map=returns_map)
+        value_history = self.get_value_history(basic['holdings'], returns_map=returns_map, timeframe=timeframe)
+
         return {
             'summary': {
                 'total_value': basic['total_value'],
@@ -34,15 +39,79 @@ class PortfolioAnalytics:
                 'total_gain_loss_pct': basic['total_gain_loss_pct'],
             },
             'holdings': basic['holdings'],
+            'value_history': value_history,
             'risk': risk,
             'correlation': correlation
         }
 
-    def get_basic_metrics(self):
+    def _build_returns_map(self, tickers, period='1y', interval='1d'):
+        returns_map = {}
+        unique_tickers = list(dict.fromkeys([t for t in tickers if t]))
+
+        for t in unique_tickers:
+            hist = self.fetcher.get_history(t, period=period, interval=interval)
+            if not hist:
+                continue
+
+            df = pd.DataFrame(hist)
+            if df.empty or 'Close' not in df.columns:
+                continue
+
+            closes = pd.to_numeric(df['Close'], errors='coerce')
+            rets = closes.pct_change()
+            if 'Date' in df.columns:
+                rets.index = df['Date']
+            returns_map[t] = rets
+
+        return returns_map
+
+    def get_value_history(self, holdings, returns_map=None, timeframe='1y'):
+        if not holdings:
+            return []
+
+        returns_map = returns_map or self._build_returns_map([h['ticker'] for h in holdings], period=timeframe)
+        weights = {h['ticker']: h['weight'] for h in holdings}
+        current_total_value = float(sum(h.get('value', 0) for h in holdings))
+
+        if current_total_value <= 0:
+            return []
+
+        returns_df = pd.DataFrame({
+            t: pd.to_numeric(s, errors='coerce')
+            for t, s in returns_map.items()
+            if t in weights
+        })
+
+        returns_df.dropna(inplace=True)
+        if returns_df.empty:
+            return []
+
+        port_returns = pd.Series(0.0, index=returns_df.index)
+        for t, w in weights.items():
+            if t in returns_df.columns:
+                port_returns += returns_df[t] * w
+
+        growth = (1 + port_returns).cumprod()
+        if growth.empty or float(growth.iloc[-1]) == 0:
+            return []
+
+        # Anchor the series to today's computed total portfolio value.
+        scale = current_total_value / float(growth.iloc[-1])
+        values = growth * scale
+
+        series = []
+        for dt, value in values.items():
+            if pd.isna(value):
+                continue
+            series.append({'date': str(dt), 'value': float(value)})
+        return series
+
+    def get_basic_metrics(self, returns_map=None):
         total_value = 0
         total_cost = 0
         holdings = []
         rf = 0.045
+        returns_map = returns_map or {}
         
         for pos in self.positions:
             ticker = pos['ticker']
@@ -66,15 +135,13 @@ class PortfolioAnalytics:
             # Holding-level Sharpe (1Y daily), used for allocation bucketing.
             holding_sharpe = None
             try:
-                hist = self.fetcher.get_history(ticker, period='1y', interval='1d')
-                if hist:
-                    hdf = pd.DataFrame(hist)
-                    if not hdf.empty and 'Close' in hdf.columns:
-                        series = pd.to_numeric(hdf['Close'], errors='coerce').pct_change().dropna()
-                        if not series.empty:
-                            h_mean = series.mean() * 252
-                            h_vol = series.std() * np.sqrt(252)
-                            holding_sharpe = (h_mean - rf) / h_vol if h_vol != 0 else None
+                series = returns_map.get(ticker)
+                if series is not None:
+                    series = pd.to_numeric(series, errors='coerce').dropna()
+                    if not series.empty:
+                        h_mean = series.mean() * 252
+                        h_vol = series.std() * np.sqrt(252)
+                        holding_sharpe = (h_mean - rf) / h_vol if h_vol != 0 else None
             except Exception:
                 holding_sharpe = None
             
@@ -107,20 +174,15 @@ class PortfolioAnalytics:
             'holdings': holdings
         }
 
-    def get_risk_metrics(self, holdings):
+    def get_risk_metrics(self, holdings, returns_map=None):
         if not holdings:
             return {}
-            
-        returns_df = pd.DataFrame()
-        tickers = [h['ticker'] for h in holdings] + ['SPY']
-        
-        for t in tickers:
-            hist = self.fetcher.get_history(t, period='1y', interval='1d')
-            if hist:
-                df = pd.DataFrame(hist)
-                if not df.empty and 'Close' in df.columns:
-                    df.set_index('Date', inplace=True)
-                    returns_df[t] = df['Close'].pct_change()
+        returns_map = returns_map or self._build_returns_map([h['ticker'] for h in holdings] + ['SPY'])
+        returns_df = pd.DataFrame({
+            t: pd.to_numeric(s, errors='coerce')
+            for t, s in returns_map.items()
+            if t in [h['ticker'] for h in holdings] + ['SPY']
+        })
                 
         returns_df.dropna(inplace=True)
         if returns_df.empty:
@@ -239,19 +301,17 @@ class PortfolioAnalytics:
             'ulcer_index': float(ulcer_index),
         }
 
-    def get_correlation_matrix(self):
+    def get_correlation_matrix(self, returns_map=None):
         tickers = [p['ticker'] for p in self.positions]
         if not tickers:
             return {}
-        
-        returns_df = pd.DataFrame()
-        for t in tickers:
-            hist = self.fetcher.get_history(t, period='1y', interval='1d')
-            if hist:
-                df = pd.DataFrame(hist)
-                if not df.empty and 'Close' in df.columns:
-                    df.set_index('Date', inplace=True)
-                    returns_df[t] = df['Close'].pct_change()
+
+        returns_map = returns_map or self._build_returns_map(tickers)
+        returns_df = pd.DataFrame({
+            t: pd.to_numeric(s, errors='coerce')
+            for t, s in returns_map.items()
+            if t in tickers
+        })
         
         if returns_df.empty:
             return {}

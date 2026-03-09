@@ -6,7 +6,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 
-export function useBrokerageSync() {
+export function useBrokerageSync(options = {}) {
+    const { lazy = false } = options;
+    const startedRef = useRef(false);
+    const [isStarted, setIsStarted] = useState(false);
     const [accounts, setAccounts]   = useState([]);
     const [positions, setPositions] = useState([]);
     const [balances, setBalances]   = useState([]);
@@ -79,25 +82,31 @@ export function useBrokerageSync() {
         await Promise.all([fetchAccounts(), fetchPositions(), fetchBalances(), fetchSummary()]);
     }, [fetchAccounts, fetchPositions, fetchBalances, fetchSummary]);
 
+    const start = useCallback(async () => {
+        if (startedRef.current) return;
+        startedRef.current = true;
+        setIsStarted(true);
+        try {
+            await ensureRegistered();
+        } catch {
+            // Not registered yet — will show prompt
+        }
+        await fetchAll();
+    }, [ensureRegistered, fetchAll]);
+
     // ------------------------------------------------------------------
     // Initial load + registration
     // ------------------------------------------------------------------
     useEffect(() => {
-        const init = async () => {
-            try {
-                await ensureRegistered();
-            } catch {
-                // Not registered yet — will show prompt
-            }
-            await fetchAll();
-        };
-        init();
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+        if (lazy) return;
+        start();
+    }, [lazy, start]);
 
     // ------------------------------------------------------------------
     // Visibility-aware polling (every 60 seconds when tab is active)
     // ------------------------------------------------------------------
     useEffect(() => {
+        if (!isStarted) return;
         const startPoll = () => {
             if (pollRef.current) return;
             pollRef.current = setInterval(() => {
@@ -129,7 +138,7 @@ export function useBrokerageSync() {
             stopPoll();
             document.removeEventListener('visibilitychange', onVisibilityChange);
         };
-    }, [fetchSummary, fetchAccounts]);
+    }, [fetchSummary, fetchAccounts, isStarted]);
 
     // ------------------------------------------------------------------
     // Actions
@@ -193,6 +202,7 @@ export function useBrokerageSync() {
         disconnect,
         fetchAccounts,
         fetchAll,
+        start,
         getConnectUrl,
         ensureRegistered,
     };
