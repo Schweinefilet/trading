@@ -113,14 +113,15 @@ class DataFetcher:
         return res
 
     def get_history(self, ticker, period='1y', interval='1d'):
-        key_params = f"period={period}&interval={interval}"
+        intraday = interval not in ('1d', '1wk', '1mo')
+        key_params = f"period={period}&interval={interval}" + ("&prepost=1" if intraday else "")
         data = CacheService.get(ticker, 'history', key_params)
         if data:
             return data
-            
+
         try:
             stock = yf.Ticker(ticker)
-            history = stock.history(period=period, interval=interval)
+            history = stock.history(period=period, interval=interval, prepost=intraday)
             if history.empty:
                 return None
             # Convert DF to list of dicts for JSON storage
@@ -134,7 +135,7 @@ class DataFetcher:
             if interval in ['1d', '1wk', '1mo']:
                 res['Date'] = res['Date'].dt.strftime('%Y-%m-%d')
             else:
-                res['Date'] = res['Date'].dt.strftime('%m-%d %H:%M')
+                res['Date'] = res['Date'].dt.strftime('%Y-%m-%d %H:%M')
                 
             data_list = res.to_dict(orient='records')
             CacheService.set(ticker, 'history', data_list, key_params)

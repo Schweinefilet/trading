@@ -5,9 +5,11 @@ import {
     Tooltip as RechartsTooltip, LineChart, Line,
     XAxis, YAxis, CartesianGrid, Area, AreaChart
 } from 'recharts';
-import { TrendingUp, TrendingDown, Target, Shield, Trash2, Pencil, Check, X, Plus, Zap, ChevronDown, ChevronUp } from 'lucide-react';
+import { TrendingUp, TrendingDown, Target, Shield, Trash2, Pencil, Check, X, Plus, Zap, ChevronDown, ChevronUp, RefreshCw, Wifi } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ParticlesBg from '../components/ParticlesBg';
+import BrokerageManager from '../components/BrokerageManager';
+import { useBrokerageSync } from '../hooks/useBrokerageSync';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
 
@@ -468,12 +470,196 @@ const RISK_EXPLANATIONS = {
     ULCER: `Good: <5% drawdowns are shallow or short-lived. Bad: >10% spending significant time deep underwater, >15% chronic drawdown pattern.`,
 };
 
+const BROKER_COLORS = {
+    Webull:    '#04A6E0',
+    Robinhood: '#00C805',
+};
+
+const DEFAULT_BROKER_COLOR = '#9ca3af';
+
+function getBrokerColor(name) {
+    return BROKER_COLORS[name] || DEFAULT_BROKER_COLOR;
+}
+
+function relativeTime(isoString) {
+    if (!isoString) return 'never';
+    const diff = (Date.now() - new Date(isoString)) / 1000;
+    if (diff < 60)    return 'just now';
+    if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+}
+
+const SyncedHoldingsSection = ({ accounts, positions, accountFilter, onFilterChange }) => {
+    const hasAccounts = accounts.length > 0;
+    const hasPositions = positions.length > 0;
+
+    const filteredPositions = useMemo(() => {
+        if (!accountFilter || accountFilter === 'all') return positions;
+        return positions.filter(p => p.account_id === accountFilter);
+    }, [positions, accountFilter]);
+
+    // Most recent last_synced across filtered positions
+    const lastSynced = useMemo(() => {
+        const dates = filteredPositions.map(p => p.last_synced).filter(Boolean);
+        if (!dates.length) return null;
+        return dates.reduce((a, b) => (a > b ? a : b));
+    }, [filteredPositions]);
+
+    return (
+        <div className="glass overflow-hidden" style={{ padding: 0 }}>
+            <div
+                className="px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+            >
+                <div>
+                    <h3 className="text-sm font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
+                        Synced Holdings
+                    </h3>
+                    {lastSynced && (
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+                            Last updated {relativeTime(lastSynced)}
+                        </p>
+                    )}
+                </div>
+                {hasAccounts && (
+                    <select
+                        value={accountFilter}
+                        onChange={e => onFilterChange(e.target.value)}
+                        className="text-xs font-bold rounded-lg px-3 py-1.5 outline-none"
+                        style={{
+                            background: 'rgba(255,255,255,0.08)',
+                            color: 'var(--text-secondary)',
+                            border: '1px solid rgba(255,255,255,0.14)',
+                        }}
+                    >
+                        <option value="all">All accounts</option>
+                        {accounts.map(a => (
+                            <option key={a.account_id} value={a.account_id}>
+                                {a.brokerage_name}{a.account_name ? ` — ${a.account_name}` : ''}{a.account_number ? ` ${a.account_number}` : ''}
+                            </option>
+                        ))}
+                    </select>
+                )}
+            </div>
+
+            {!hasAccounts ? (
+                <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
+                    <Wifi className="h-8 w-8 mb-3" style={{ color: 'rgba(255,255,255,0.12)' }} />
+                    <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+                        Not connected — link a brokerage above to see synced positions here.
+                    </p>
+                </div>
+            ) : !hasPositions ? (
+                <div className="flex items-center justify-center py-10">
+                    <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+                        No positions synced yet — click Sync All to fetch your holdings.
+                    </p>
+                </div>
+            ) : filteredPositions.length === 0 ? (
+                <div className="flex items-center justify-center py-10">
+                    <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>No positions for selected account.</p>
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr
+                                className="text-[10px] uppercase font-bold tracking-widest"
+                                style={{ color: 'var(--text-tertiary)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+                            >
+                                <th className="py-3 px-3 text-left">Ticker</th>
+                                <th className="py-3 px-3 text-left">Brokerage</th>
+                                <th className="py-3 px-3 text-left">Account</th>
+                                <th className="py-3 px-3 text-right">Shares</th>
+                                <th className="py-3 px-3 text-right">Avg Cost</th>
+                                <th className="py-3 px-3 text-right">Current</th>
+                                <th className="py-3 px-3 text-right">Market Value</th>
+                                <th className="py-3 px-3 text-right">Unrealized P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filteredPositions.map(p => {
+                                const isPos = (p.open_pnl || 0) >= 0;
+                                const color = getBrokerColor(p.brokerage_name);
+                                return (
+                                    <tr
+                                        key={p.id}
+                                        className="transition-colors"
+                                        style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                                    >
+                                        <td className="py-3 px-3">
+                                            <Link
+                                                to={`/stock/${p.ticker}`}
+                                                className="font-bold transition-colors hover:opacity-80"
+                                                style={{ color: 'var(--accent)' }}
+                                            >
+                                                {p.ticker}
+                                            </Link>
+                                            {p.symbol_description && (
+                                                <p className="text-[10px] mt-0.5 truncate max-w-[160px]" style={{ color: 'var(--text-tertiary)' }}>
+                                                    {p.symbol_description}
+                                                </p>
+                                            )}
+                                        </td>
+                                        <td className="py-3 px-3">
+                                            <span
+                                                className="inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider"
+                                                style={{ background: `${color}20`, color: color, border: `1px solid ${color}40` }}
+                                            >
+                                                {p.brokerage_name}
+                                            </span>
+                                        </td>
+                                        <td className="py-3 px-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                                            {p.account_name || '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right" style={{ color: 'var(--text-secondary)' }}>
+                                            {p.units != null ? p.units.toLocaleString(undefined, { maximumFractionDigits: 6 }) : '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right" style={{ color: 'var(--text-secondary)' }}>
+                                            {p.average_purchase_price != null ? `$${p.average_purchase_price.toFixed(2)}` : '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right font-medium" style={{ color: 'var(--text-primary)' }}>
+                                            {p.current_price != null ? `$${p.current_price.toFixed(2)}` : '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right font-bold" style={{ color: 'var(--text-primary)' }}>
+                                            {p.current_market_value != null
+                                                ? `$${p.current_market_value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                                                : '—'}
+                                        </td>
+                                        <td className="py-3 px-3 text-right">
+                                            <div className="flex flex-col items-end">
+                                                <span className="font-bold" style={{ color: isPos ? 'var(--positive)' : 'var(--negative)' }}>
+                                                    {isPos ? '+' : ''}{p.open_pnl != null ? `$${p.open_pnl.toFixed(2)}` : '—'}
+                                                </span>
+                                                {p.open_pnl_percent != null && (
+                                                    <span className="text-xs opacity-75" style={{ color: isPos ? 'var(--positive)' : 'var(--negative)' }}>
+                                                        {isPos ? '+' : ''}{(p.open_pnl_percent * 100).toFixed(2)}%
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    );
+};
+
 const Portfolio = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
     const [allocationMode, setAllocationMode] = useState('ticker');
     const [showAllRiskMetrics, setShowAllRiskMetrics] = useState(false);
+    const [syncedAccountFilter, setSyncedAccountFilter] = useState('all');
+
+    // Brokerage sync state (shared hook)
+    const brokerage = useBrokerageSync();
 
     const fetchPortfolio = useCallback(async () => {
         setLoading(true);
@@ -663,8 +849,9 @@ const Portfolio = () => {
             {/* Summary Bar */}
             {!isEmpty && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* Manual portfolio value */}
                     <div className="col-span-2 glass p-5 relative overflow-hidden">
-                        <p className="text-xs uppercase font-bold tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Total Market Value</p>
+                        <p className="text-xs uppercase font-bold tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Manual Portfolio</p>
                         <p className="text-3xl font-black mt-1" style={{ color: 'var(--text-primary)' }}>
                             ${toFinite(safeSummary.total_value)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                         </p>
@@ -678,6 +865,24 @@ const Portfolio = () => {
                             }
                             {(toFinite(safeSummary.total_gain_loss) ?? 0) >= 0 ? '+' : ''}${Math.abs(toFinite(safeSummary.total_gain_loss) ?? 0).toFixed(2)} ({asRawPercentNumber(safeSummary.total_gain_loss_pct, 2)}%) Total Return
                         </div>
+
+                        {/* Synced + combined sub-row */}
+                        {brokerage.summary && brokerage.summary.account_count > 0 && (
+                            <div className="mt-3 pt-3 space-y-1" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                                <div className="flex items-center justify-between text-xs">
+                                    <span style={{ color: 'var(--text-tertiary)' }}>Synced brokerages</span>
+                                    <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>
+                                        ${brokerage.summary.total_portfolio_value?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="font-bold" style={{ color: 'var(--text-tertiary)' }}>Combined total</span>
+                                    <span className="font-black" style={{ color: 'var(--accent)' }}>
+                                        ${((toFinite(safeSummary.total_value) || 0) + (brokerage.summary.total_portfolio_value || 0)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </div>
                     <MetricCard icon={Target} label="Beta" value={asNumber(displayRisk.beta)} color="bg-blue-500/10 text-blue-400" />
                     <MetricCard icon={Shield} label="Sharpe Ratio" value={asNumber(displayRisk.sharpe_ratio)} color="bg-emerald-500/10 text-emerald-400" />
@@ -686,27 +891,42 @@ const Portfolio = () => {
 
             {isEmpty ? (
                 /* Empty State */
-                <div
-                    className="flex flex-col items-center justify-center py-32"
-                    style={{
-                        borderRadius: '20px',
-                        border: '2px dashed rgba(255,255,255,0.12)',
-                        background: 'rgba(255,255,255,0.03)',
-                    }}
-                >
-                    <Zap className="h-16 w-16 mb-6" style={{ color: 'rgba(255,255,255,0.15)' }} />
-                    <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-secondary)' }}>Portfolio is empty</h2>
-                    <p className="mb-8 text-sm text-center max-w-sm" style={{ color: 'var(--text-tertiary)' }}>
-                        Start by adding your first stock position to track your investments and see risk analytics.
-                    </p>
-                    <button
-                        onClick={() => setShowAddModal(true)}
-                        className="flex items-center space-x-2 font-bold px-6 py-3 transition-colors"
-                        style={{ background: 'var(--accent)', color: '#000', borderRadius: 'var(--radius-btn)' }}
+                <div className="space-y-8">
+                    <div
+                        className="flex flex-col items-center justify-center py-20"
+                        style={{
+                            borderRadius: '20px',
+                            border: '2px dashed rgba(255,255,255,0.12)',
+                            background: 'rgba(255,255,255,0.03)',
+                        }}
                     >
-                        <Plus className="h-5 w-5" />
-                        <span>Add Your First Position</span>
-                    </button>
+                        <Zap className="h-16 w-16 mb-6" style={{ color: 'rgba(255,255,255,0.15)' }} />
+                        <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-secondary)' }}>Portfolio is empty</h2>
+                        <p className="mb-8 text-sm text-center max-w-sm" style={{ color: 'var(--text-tertiary)' }}>
+                            Start by adding your first stock position to track your investments and see risk analytics.
+                        </p>
+                        <button
+                            onClick={() => setShowAddModal(true)}
+                            className="flex items-center space-x-2 font-bold px-6 py-3 transition-colors"
+                            style={{ background: 'var(--accent)', color: '#000', borderRadius: 'var(--radius-btn)' }}
+                        >
+                            <Plus className="h-5 w-5" />
+                            <span>Add Your First Position</span>
+                        </button>
+                    </div>
+                    <BrokerageManager
+                        accounts={brokerage.accounts}
+                        positions={brokerage.positions}
+                        balances={brokerage.balances}
+                        summary={brokerage.summary}
+                        isSyncing={brokerage.isSyncing}
+                        syncingAccountId={brokerage.syncingAccountId}
+                        syncAll={brokerage.syncAll}
+                        syncAccount={brokerage.syncAccount}
+                        disconnect={brokerage.disconnect}
+                        fetchAccounts={brokerage.fetchAccounts}
+                        getConnectUrl={brokerage.getConnectUrl}
+                    />
                 </div>
             ) : (
                 <>
@@ -838,6 +1058,29 @@ const Portfolio = () => {
                             </table>
                         </div>
                     </div>
+
+                    {/* Connected Accounts */}
+                    <BrokerageManager
+                        accounts={brokerage.accounts}
+                        positions={brokerage.positions}
+                        balances={brokerage.balances}
+                        summary={brokerage.summary}
+                        isSyncing={brokerage.isSyncing}
+                        syncingAccountId={brokerage.syncingAccountId}
+                        syncAll={brokerage.syncAll}
+                        syncAccount={brokerage.syncAccount}
+                        disconnect={brokerage.disconnect}
+                        fetchAccounts={brokerage.fetchAccounts}
+                        getConnectUrl={brokerage.getConnectUrl}
+                    />
+
+                    {/* Synced Holdings */}
+                    <SyncedHoldingsSection
+                        accounts={brokerage.accounts}
+                        positions={brokerage.positions}
+                        accountFilter={syncedAccountFilter}
+                        onFilterChange={setSyncedAccountFilter}
+                    />
 
                     {/* Correlation Heatmap */}
                     {safeHoldings.length >= 2 && Object.keys(safeCorrelation).length > 0 && (
