@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+from collections import defaultdict
+from datetime import datetime
 from .data_fetcher import DataFetcher
 
 class PortfolioAnalytics:
@@ -10,7 +12,7 @@ class PortfolioAnalytics:
         self.positions = positions
         self.fetcher = DataFetcher()
 
-    def get_all_metrics(self, timeframe='1y', interval='1d', total_cash=0.0, start_date=None, snapshots=None):
+    def get_all_metrics(self, timeframe='1y', interval='1d', total_cash=0.0, start_date=None, snapshots=None, trade_activities=None, precomputed_trade_backfill=None):
         if not self.positions:
             return {
                 'summary': {
@@ -45,6 +47,7 @@ class PortfolioAnalytics:
         # (i.e. the full amount the user had before deploying into stocks).
         total_cost = sum(h.get('avg_cost', 0) * h.get('shares', 0) for h in basic['holdings'])
         pre_buy_cash = total_cash + total_cost
+        stocks_value = basic['total_value']
 
         value_history = self.get_value_history(
             basic['holdings'],
@@ -55,9 +58,11 @@ class PortfolioAnalytics:
             pre_buy_cash=pre_buy_cash,
             start_date=start_date,
             snapshots=snapshots,
+            trade_activities=trade_activities,
+            current_total_value=stocks_value + total_cash,
+            precomputed_trade_backfill=precomputed_trade_backfill,
         )
 
-        stocks_value = basic['total_value']
         return {
             'summary': {
                 'total_value': stocks_value + total_cash,
@@ -92,29 +97,263 @@ class PortfolioAnalytics:
 
         return returns_map
 
+    def _parse_trade_dt(self, value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return None
+            if candidate.endswith('Z'):
+                candidate = f"{candidate[:-1]}+00:00"
+            try:
+                return datetime.fromisoformat(candidate)
+            except ValueError:
+                for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d'):
+                    try:
+                        return datetime.strptime(candidate, fmt)
+                    except ValueError:
+                        continue
+        return None
+
+    def _period_start(self, timeframe):
+        days_by_period = {
+            '1d': 1,
+            '5d': 5,
+            '7d': 7,
+            '1mo': 31,
+            '3mo': 92,
+            '6mo': 183,
+            '1y': 366,
+            '2y': 731,
+            '5y': 1827,
+            '10y': 3653,
+            'max': None,
+        }
+        key = str(timeframe or '').lower()
+        days = days_by_period.get(key, 366)
+        if days is None:
+            return None
+        return (pd.Timestamp.utcnow().normalize() - pd.Timedelta(days=days - 1)).date()
+
+    def _reconstruct_from_trade_activities(self, trade_activities, current_total_value, timeframe='1y', cash_floor=0.0):
+        if not trade_activities:
+            return []
+
+        rows = []
+        tickers = set()
+        for item in trade_activities:
+            trade_dt = self._parse_trade_dt(item.get('occurred_at') or item.get('trade_date'))
+            if trade_dt is None:
+                continue
+            ticker = str(item.get('ticker') or '').upper()
+            side = str(item.get('side') or item.get('type') or '').lower()
+            units = float(item.get('units') or 0)
+            price = float(item.get('price') or 0)
+            fee = float(item.get('fee') or 0)
+            if not ticker or units <= 0 or price <= 0 or side not in {'buy', 'sell'}:
+                continue
+            rows.append({
+                'dt': trade_dt,
+                'date': trade_dt.date(),
+                'ticker': ticker,
+                'side': side,
+                'units': units,
+                'price': price,
+                'fee': fee,
+            })
+            tickers.add(ticker)
+
+        if not rows or not tickers:
+            return []
+
+        rows.sort(key=lambda r: r['dt'])
+        first_trade_date = rows[0]['date']
+        start_filter = self._period_start(timeframe)
+
+        price_frames = {}
+        for ticker in sorted(tickers):
+            hist = self.fetcher.get_history(ticker, period='max', interval='1d')
+            if not hist:
+                continue
+            frame = pd.DataFrame(hist)
+            if frame.empty or 'Date' not in frame.columns or 'Close' not in frame.columns:
+                continue
+            frame['Date'] = pd.to_datetime(frame['Date'], errors='coerce').dt.date
+            frame['Close'] = pd.to_numeric(frame['Close'], errors='coerce')
+            frame = frame.dropna(subset=['Date', 'Close'])
+            if frame.empty:
+                continue
+            series = frame.drop_duplicates(subset=['Date']).set_index('Date')['Close'].sort_index()
+            price_frames[ticker] = series
+
+        if not price_frames:
+            return []
+
+        end_date = pd.Timestamp.utcnow().date()
+        full_index = pd.date_range(start=first_trade_date, end=end_date, freq='D').date
+        prices = pd.DataFrame(index=full_index)
+        for ticker, series in price_frames.items():
+            prices[ticker] = series.reindex(full_index).ffill().bfill()
+
+        if prices.empty:
+            return []
+
+        trades_by_date = defaultdict(list)
+        for row in rows:
+            trades_by_date[row['date']].append(row)
+        for date_key in trades_by_date:
+            trades_by_date[date_key].sort(key=lambda r: r['dt'])
+
+        holdings = defaultdict(float)
+        raw_series = []
+
+        for current_date in full_index:
+            for trade in trades_by_date.get(current_date, []):
+                if trade['side'] == 'buy':
+                    holdings[trade['ticker']] += trade['units']
+                else:
+                    holdings[trade['ticker']] -= trade['units']
+
+            equity_value = 0.0
+            for ticker, units in holdings.items():
+                if abs(units) < 1e-12:
+                    continue
+                px = prices.at[current_date, ticker] if ticker in prices.columns else np.nan
+                if pd.notna(px):
+                    equity_value += units * float(px)
+
+            raw_series.append((current_date, max(float(equity_value), 0.0)))
+
+        if not raw_series:
+            return []
+
+        raw_values = pd.Series([v for _, v in raw_series], index=[d for d, _ in raw_series], dtype='float64')
+        raw_values = raw_values.interpolate(method='linear').ffill().bfill()
+        if raw_values.empty:
+            return []
+
+        anchor = float(raw_values.iloc[-1])
+        target_equity = max(float(current_total_value) - float(cash_floor), 0.0)
+        if anchor > 0:
+            scaled_equity = raw_values * (target_equity / anchor)
+        else:
+            scaled_equity = raw_values * 0.0
+        adjusted = (scaled_equity + float(cash_floor)).clip(lower=float(cash_floor))
+
+        result = []
+        for d, v in adjusted.items():
+            if start_filter and d < start_filter:
+                continue
+            result.append({'date': str(d), 'value': float(v)})
+        return result
+
+    def _slice_series_by_timeframe(self, series, timeframe='1y'):
+        if not series:
+            return []
+        start_filter = self._period_start(timeframe)
+        if start_filter is None:
+            return list(series)
+
+        sliced = []
+        for point in series:
+            date_str = str(point.get('date', ''))[:10]
+            try:
+                dt = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                continue
+            if dt >= start_filter:
+                sliced.append(point)
+        return sliced
+
+    def build_trade_backfill_series(self, trade_activities, current_total_value, total_cash=0.0):
+        """Build reusable all-time reconstructed daily series from trade activities."""
+        return self._reconstruct_from_trade_activities(
+            trade_activities=trade_activities,
+            current_total_value=current_total_value,
+            timeframe='max',
+            cash_floor=total_cash,
+        )
+
     def get_value_history(self, holdings, returns_map=None, timeframe='1y', interval='1d',
-                          total_cash=0.0, pre_buy_cash=None, start_date=None, snapshots=None):
+                          total_cash=0.0, pre_buy_cash=None, start_date=None, snapshots=None,
+                          trade_activities=None, current_total_value=None, precomputed_trade_backfill=None):
         """
         Build portfolio value history series.
+
+        For intraday intervals (1m): Use stored snapshots if available. Fallback to calculated values.
+        For daily+ intervals: Use calculated values, with snapshots as fallback for historical accuracy.
 
         - Dates before start_date: flat line at pre_buy_cash (cash held before any position
           was opened = remaining_cash + cost_basis_of_all_positions).
         - Dates on/after start_date: computed from weighted returns, anchored to current value.
-        - Where a stored snapshot exists for a date, it overrides the computed value for
+        - Where a stored snapshot exists, it may override the computed value for
           historical accuracy (survives portfolio composition changes, e.g. selling/rebuying).
 
-        snapshots: dict of {date_str: total_value} from PortfolioSnapshot DB rows.
+        snapshots: dict of {timestamp_str: total_value} from PortfolioSnapshot DB rows.
         pre_buy_cash: value to show as flat line before start_date. Defaults to total_cash.
         """
         snapshots = snapshots or {}
         start_str = start_date.strftime('%Y-%m-%d') if start_date else None
         flat_line_value = pre_buy_cash if pre_buy_cash is not None else total_cash
+        intraday = interval not in ('1d', '1wk', '1mo')
 
         if not holdings:
             # No positions at all — if we have snapshots, return those; else empty.
             if snapshots:
                 return [{'date': d, 'value': v} for d, v in sorted(snapshots.items())]
             return []
+
+        # For intraday intervals, prioritize stored minute snapshots
+        if intraday and snapshots:
+            # Build series from snapshots, sorted by timestamp
+            series = []
+            for timestamp in sorted(snapshots.keys()):
+                series.append({'date': timestamp, 'value': float(snapshots[timestamp])})
+            return series
+
+        # For daily+ views, prefer persisted trade-replay backfill when available.
+        if not intraday and precomputed_trade_backfill:
+            reconstructed = self._slice_series_by_timeframe(precomputed_trade_backfill, timeframe=timeframe)
+            if reconstructed:
+                snapshot_daily = {
+                    str(k)[:10]: float(v)
+                    for k, v in snapshots.items()
+                    if isinstance(k, str) and len(k) >= 10
+                }
+                merged = []
+                for point in reconstructed:
+                    day = point['date'][:10]
+                    if day in snapshot_daily:
+                        merged.append({'date': point['date'], 'value': snapshot_daily[day]})
+                    else:
+                        merged.append(point)
+                return merged
+
+        # Fallback: build reconstruction from activities when persisted series is missing.
+        if not intraday and trade_activities and current_total_value is not None:
+            reconstructed = self._reconstruct_from_trade_activities(
+                trade_activities=trade_activities,
+                current_total_value=current_total_value,
+                timeframe=timeframe,
+                cash_floor=total_cash,
+            )
+            if reconstructed:
+                snapshot_daily = {
+                    str(k)[:10]: float(v)
+                    for k, v in snapshots.items()
+                    if isinstance(k, str) and len(k) >= 10
+                }
+                merged = []
+                for point in reconstructed:
+                    day = point['date'][:10]
+                    if day in snapshot_daily:
+                        merged.append({'date': point['date'], 'value': snapshot_daily[day]})
+                    else:
+                        merged.append(point)
+                return merged
 
         returns_map = returns_map or self._build_returns_map([h['ticker'] for h in holdings], period=timeframe)
         weights = {h['ticker']: h['weight'] for h in holdings}
@@ -146,7 +385,6 @@ class PortfolioAnalytics:
         scale = stock_total / float(growth.iloc[-1])
         values = growth * scale + total_cash
 
-        intraday = interval not in ('1d', '1wk', '1mo')
         seen = set()
         series = []
         for dt, value in values.items():
@@ -160,8 +398,8 @@ class PortfolioAnalytics:
             date_str = dt_str[:10]  # always the date portion for snapshot/start comparisons
 
             # Stored snapshot takes priority (true historical accuracy).
-            if date_str in snapshots:
-                series.append({'date': dt_str, 'value': float(snapshots[date_str])})
+            if dt_str in snapshots:
+                series.append({'date': dt_str, 'value': float(snapshots[dt_str])})
             elif start_str and date_str < start_str:
                 # Before any position was opened — show pre-buy cash as flat line.
                 series.append({'date': dt_str, 'value': float(flat_line_value)})

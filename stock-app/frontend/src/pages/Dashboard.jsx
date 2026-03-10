@@ -568,7 +568,7 @@ const WatchlistModal = ({ title, watchlist, onClose, onSave }) => {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 const Dashboard = () => {
     const [portfolio, setPortfolio] = useState(null);
-    const [portfolioTimeframe, setPortfolioTimeframe] = useState('1y');
+    const [portfolioTimeframe, setPortfolioTimeframe] = useState('1w');
 
     // Load all three watchlists from localStorage
     const [watchlists, setWatchlists] = useState(() => {
@@ -795,6 +795,8 @@ const Dashboard = () => {
                     ? String(date).slice(11, 16)
                     : portfolioTimeframe === '1w'
                         ? String(date).slice(5, 16)
+                        : portfolioTimeframe === 'max'
+                            ? String(date).slice(2, 10)
                         : String(date).slice(5, 10);
                 return { date, shortDate, value };
             })
@@ -853,6 +855,7 @@ const Dashboard = () => {
                                             { key: '6mo', label: '6M' },
                                             { key: '1y', label: '1Y' },
                                             { key: '2y', label: '2Y' },
+                                            { key: 'max', label: 'ALL' },
                                         ].map(({ key, label }) => (
                                             <button
                                                 key={key}

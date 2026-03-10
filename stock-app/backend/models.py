@@ -73,9 +73,28 @@ class SyncedAccountBalance(db.Model):
     fetched_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class PortfolioSnapshot(db.Model):
-    """Daily snapshot of total portfolio value for historical chart persistence."""
+    """Minute-by-minute snapshot of total portfolio value for intraday history."""
     __tablename__ = 'portfolio_snapshots'
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.String(19), nullable=False, unique=True)  # 'YYYY-MM-DD HH:MM'
+    total_value = db.Column(db.Float, nullable=False)
+    fetched_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.Index('idx_portfolio_snapshots_timestamp', 'timestamp'),)
+
+
+class PortfolioBackfillPoint(db.Model):
+    """Persisted daily reconstructed portfolio history point."""
+    __tablename__ = 'portfolio_backfill_points'
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.String(10), nullable=False, unique=True)  # 'YYYY-MM-DD'
     total_value = db.Column(db.Float, nullable=False)
-    fetched_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.Index('idx_portfolio_backfill_points_date', 'date'),)
+
+
+class PortfolioBackfillMeta(db.Model):
+    """Metadata for persisted reconstructed backfill history."""
+    __tablename__ = 'portfolio_backfill_meta'
+    id = db.Column(db.Integer, primary_key=True)
+    signature = db.Column(db.String(255), nullable=False)  # trade-count/version signature
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)

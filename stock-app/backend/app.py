@@ -40,6 +40,79 @@ def health_check():
 
 with app.app_context():
     db.create_all()
+    
+    # Handle schema migration: update old PortfolioSnapshot table if needed
+    from sqlalchemy import inspect, text
+    inspector = inspect(db.engine)
+    tables = inspector.get_table_names()
+    
+    if 'portfolio_snapshots' in tables:
+        columns = [col['name'] for col in inspector.get_columns('portfolio_snapshots')]
+        # If table has old 'date' column, migrate to new 'timestamp' column
+        if 'date' in columns and 'timestamp' not in columns:
+            print("[Schema Migration] Migrating portfolio_snapshots table...")
+            try:
+                # SQLite doesn't support ALTER TABLE to change columns easily
+                # So we'll create a new table and copy data
+                db.session.execute(text("""
+                    CREATE TABLE portfolio_snapshots_new (
+                        id INTEGER PRIMARY KEY,
+                        timestamp TEXT NOT NULL UNIQUE,
+                        total_value FLOAT NOT NULL,
+                        fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(timestamp)
+                    )
+                """))
+                # Copy date data to timestamp (date becomes timestamp with 00:00)
+                db.session.execute(text("""
+                    INSERT INTO portfolio_snapshots_new (id, timestamp, total_value, fetched_at)
+                    SELECT id, date || ' 00:00', total_value, fetched_at
+                    FROM portfolio_snapshots
+                """))
+                # Drop old table and rename
+                db.session.execute(text("DROP TABLE portfolio_snapshots"))
+                db.session.execute(text("ALTER TABLE portfolio_snapshots_new RENAME TO portfolio_snapshots"))
+                db.session.commit()
+                print("[Schema Migration] Successfully migrated portfolio_snapshots table")
+            except Exception as e:
+                print(f"[Schema Migration] Error during migration: {e}")
+                db.session.rollback()
+                # If migration fails, just drop and recreate
+                try:
+                    db.session.execute(text("DROP TABLE IF EXISTS portfolio_snapshots"))
+                    db.session.execute(text("DROP TABLE IF EXISTS portfolio_snapshots_new"))
+                    db.session.commit()
+                    db.create_all()
+                    print("[Schema Migration] Recreated portfolio_snapshots table")
+                except Exception as e2:
+                    print(f"[Schema Migration] Error recreating table: {e2}")
+                    db.session.rollback()
+
+# ---------------------------------------------------------------------------
+# Portfolio Snapshot Collector (minute-by-minute intraday snapshots)
+# ---------------------------------------------------------------------------
+
+from services.snapshot_collector import get_snapshot_collector
+
+# Only start collector if not in testing mode and if we have positions
+try:
+    snapshot_collector = get_snapshot_collector()
+    # Delay start slightly to ensure database is ready
+    def start_collector_delayed():
+        try:
+            import time
+            time.sleep(2)
+            snapshot_collector.start(app)
+        except Exception as e:
+            logging.error(f"[SnapshotCollector] Failed to start: {e}")
+    
+    import threading
+    collector_thread = threading.Thread(target=start_collector_delayed, daemon=True)
+    collector_thread.start()
+    atexit.register(lambda: snapshot_collector.stop())
+    logging.info("[SnapshotCollector] Portfolio snapshot collector will start shortly")
+except Exception as e:
+    logging.error(f"[SnapshotCollector] Initialization error: {e}")
 
 # ---------------------------------------------------------------------------
 # Background sync scheduler (APScheduler)

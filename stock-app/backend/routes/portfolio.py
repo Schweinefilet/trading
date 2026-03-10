@@ -8,7 +8,7 @@ portfolio_bp = Blueprint('portfolio', __name__)
 def _invalidate_portfolio_analytics_cache():
     try:
         # Invalidate all timeframe caches
-        for timeframe in ['1d', '1w', '1m', '3mo', '6mo', '1y', '2y']:
+        for timeframe in ['1d', '1w', '1m', '3mo', '6mo', '1y', '2y', 'max']:
             CacheService.delete('__portfolio__', 'portfolio_analytics', f'v1_{timeframe}')
     except Exception:
         # Keep write path resilient even if cache eviction fails.

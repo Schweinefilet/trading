@@ -9,7 +9,7 @@ import os
 import base64
 import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from cryptography.fernet import Fernet
 
@@ -166,6 +166,43 @@ def get_account_positions(snaptrade_user_id: str, user_secret: str, account_id: 
     )
     body = _body(response)
     return body if isinstance(body, list) else []
+
+
+def get_account_activities(
+    snaptrade_user_id: str,
+    user_secret: str,
+    account_id: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    activity_types: str = 'BUY,SELL',
+    limit: int = 1000,
+) -> list:
+    """Return historical activities for an account, handling pagination."""
+    client = _get_client()
+    offset = 0
+    items = []
+
+    while True:
+        response = client.account_information.get_account_activities(
+            user_id=snaptrade_user_id,
+            user_secret=user_secret,
+            account_id=account_id,
+            start_date=start_date,
+            end_date=end_date,
+            offset=offset,
+            limit=limit,
+            type=activity_types,
+        )
+        body = _body(response)
+        page = _attr_or_key(body, 'data', default=[])
+        if not isinstance(page, list):
+            page = [page] if page else []
+        items.extend(page)
+        if len(page) < limit:
+            break
+        offset += limit
+
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +373,137 @@ def _parse_balance(bal) -> dict:
         "buying_power":       _to_float(_attr_or_key(bal, "buying_power")),
         "maintenance_excess": _to_float(_attr_or_key(bal, "maintenance_excess")),
     }
+
+
+def _parse_datetime(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if candidate.endswith('Z'):
+            candidate = f"{candidate[:-1]}+00:00"
+        try:
+            return datetime.fromisoformat(candidate)
+        except ValueError:
+            for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d'):
+                try:
+                    return datetime.strptime(candidate, fmt)
+                except ValueError:
+                    continue
+    return None
+
+
+def _extract_symbol_ticker(symbol_obj) -> str:
+    inner = _attr_or_key(symbol_obj, 'symbol') if symbol_obj else None
+    ticker = (
+        _attr_or_key(inner, 'raw_symbol', 'symbol')
+        or _attr_or_key(symbol_obj, 'raw_symbol', 'symbol')
+        or ''
+    )
+    return str(ticker).upper()
+
+
+def _looks_like_exact_time(dt: datetime | None) -> bool:
+    return bool(dt and (dt.hour != 0 or dt.minute != 0 or dt.second != 0 or dt.microsecond != 0))
+
+
+def normalize_activity_marker(activity, ticker: str, account_id: str | None = None) -> dict | None:
+    """Convert a SnapTrade activity into a normalized chart marker payload."""
+    normalized_ticker = str(ticker or '').upper()
+    activity_ticker = _extract_symbol_ticker(_attr_or_key(activity, 'symbol'))
+    if activity_ticker != normalized_ticker:
+        return None
+
+    activity_type = str(_attr_or_key(activity, 'type', default='') or '').upper()
+    if activity_type not in {'BUY', 'SELL'}:
+        return None
+
+    trade_dt = _parse_datetime(_attr_or_key(activity, 'trade_date'))
+    if trade_dt is None:
+        return None
+
+    units = _to_float(_attr_or_key(activity, 'units'))
+    price = _to_float(_attr_or_key(activity, 'price'))
+    amount = _to_float(_attr_or_key(activity, 'amount'))
+    fee = _to_float(_attr_or_key(activity, 'fee'))
+
+    return {
+        'id': _attr_or_key(activity, 'id') or f"{account_id or 'account'}:{activity_type}:{trade_dt.isoformat()}",
+        'ticker': activity_ticker,
+        'side': 'buy' if activity_type == 'BUY' else 'sell',
+        'type': activity_type,
+        'occurred_at': trade_dt.isoformat(),
+        'trade_date': trade_dt.date().isoformat(),
+        'has_exact_time': _looks_like_exact_time(trade_dt),
+        'price': price,
+        'units': units,
+        'amount': amount,
+        'fee': fee,
+        'description': _attr_or_key(activity, 'description', default='') or '',
+        'account_id': account_id,
+        'external_reference_id': _attr_or_key(activity, 'external_reference_id'),
+    }
+
+
+def normalize_activity_record(activity, account_id: str | None = None) -> dict | None:
+    """Normalize a BUY/SELL activity without pre-filtering on a ticker."""
+    activity_ticker = _extract_symbol_ticker(_attr_or_key(activity, 'symbol'))
+    if not activity_ticker:
+        return None
+    return normalize_activity_marker(activity, ticker=activity_ticker, account_id=account_id)
+
+
+def period_to_date_range(period: str | None) -> tuple[date, date]:
+    """Map frontend chart periods to a SnapTrade activity date window."""
+    days_by_period = {
+        '1d': 1,
+        '5d': 5,
+        '7d': 7,
+        '1mo': 31,
+        '3mo': 92,
+        '6mo': 183,
+        '1y': 366,
+        '2y': 731,
+        '5y': 1827,
+    }
+    today = datetime.utcnow().date()
+    days = days_by_period.get(str(period or '').lower(), 31)
+    return today - timedelta(days=max(days - 1, 0)), today
+
+
+def get_trade_markers_for_ticker(
+    snaptrade_user_id: str,
+    user_secret: str,
+    account_ids: list[str],
+    ticker: str,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    """Aggregate BUY/SELL activities across accounts for a single ticker."""
+    markers = []
+
+    for account_id in account_ids:
+        activities = get_account_activities(
+            snaptrade_user_id=snaptrade_user_id,
+            user_secret=user_secret,
+            account_id=account_id,
+            start_date=start_date,
+            end_date=end_date,
+            activity_types='BUY,SELL',
+        )
+        for activity in activities:
+            marker = normalize_activity_marker(activity, ticker=ticker, account_id=account_id)
+            if marker:
+                markers.append(marker)
+
+    markers.sort(key=lambda item: item.get('occurred_at') or '')
+    return markers
 
 
 # ---------------------------------------------------------------------------

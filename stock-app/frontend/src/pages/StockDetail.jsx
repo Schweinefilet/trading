@@ -79,8 +79,10 @@ const StockDetail = () => {
     const [data, setData] = useState([]);
     const [indicatorData, setIndicatorData] = useState([]);
     const [quote, setQuote] = useState(null);
-    const [period, setPeriod] = useState('5y');
-    const [interval, setInterval] = useState('1d');
+    const [period, setPeriod] = useState('1mo');
+    const [interval, setInterval] = useState('5m');
+    const [position, setPosition] = useState(null);
+    const [tradeMarkers, setTradeMarkers] = useState([]);
 
     const handleIntervalChange = (newInterval) => {
         setInterval(newInterval);
@@ -89,7 +91,7 @@ const StockDetail = () => {
             setPeriod(INTERVAL_MAX_PERIOD[newInterval]);
         } else {
             // Switching back to daily/weekly/monthly: restore default
-            setPeriod('5y');
+            setPeriod('1y');
         }
     };
     const [chartType, setChartType] = useState('hollow_candle');
@@ -136,6 +138,38 @@ const StockDetail = () => {
 
     // Reset hovered bar on ticker change
     useEffect(() => { setHoveredBar(null); }, [ticker]);
+
+    // Fetch portfolio position for this ticker and calculate P&L from current price
+    useEffect(() => {
+        const fetchPosition = async () => {
+            try {
+                const portfolioRes = await axios.get('http://localhost:5001/api/portfolio');
+                const positions = Array.isArray(portfolioRes.data) ? portfolioRes.data : [];
+                const pos = positions.find(p => p.ticker === ticker.toUpperCase());
+                
+                if (pos && data.length > 0) {
+                    // Get current price from latest data point
+                    const currentPrice = data[data.length - 1]?.close || data[data.length - 1]?.Close || 0;
+                    const pnl = (currentPrice - pos.avg_cost) * pos.shares;
+                    setPosition({
+                        shares: pos.shares,
+                        entryPrice: pos.avg_cost,
+                        currentPrice: currentPrice,
+                        pnl: pnl
+                    });
+                } else {
+                    setPosition(null);
+                }
+            } catch (err) {
+                console.error('Failed to fetch position:', err);
+                setPosition(null);
+            }
+        };
+        
+        if (ticker && data.length > 0) {
+            fetchPosition();
+        }
+    }, [ticker, data]);
 
     // Close chart-type dropdown on outside click
     useEffect(() => {
@@ -204,10 +238,12 @@ const StockDetail = () => {
             setLoading(true);
             try {
                 const indicatorsParam = activeIndicators.join(',');
-                const [historyRes, indicatorRes, quoteRes] = await Promise.all([
+                const [historyRes, indicatorRes, quoteRes, markersRes] = await Promise.all([
                     getWithRetry(`http://localhost:5001/api/stock/${ticker}/history?period=${period}&interval=${interval}`, { signal: controller.signal }),
                     getWithRetry(`http://localhost:5001/api/stock/${ticker}/indicators?period=${period}&interval=${interval}&indicators=${indicatorsParam}`, { signal: controller.signal }),
-                    getWithRetry(`http://localhost:5001/api/stock/${ticker}/quote`, { signal: controller.signal })
+                    getWithRetry(`http://localhost:5001/api/stock/${ticker}/quote`, { signal: controller.signal }),
+                    getWithRetry(`http://localhost:5001/api/stock/${ticker}/trade-markers?period=${period}&interval=${interval}`, { signal: controller.signal })
+                        .catch(() => ({ data: [] })),
                 ]);
 
                 if (requestSeqRef.current !== requestId) {
@@ -222,12 +258,14 @@ const StockDetail = () => {
                 setData(hData);
                 setIndicatorData(iData);
                 setQuote(quoteRes.data);
+                setTradeMarkers(Array.isArray(markersRes.data) ? markersRes.data : []);
                 setError(null);
             } catch (err) {
                 if (err?.code === 'ERR_CANCELED') {
                     return;
                 }
                 console.error("Fetch error:", err);
+                setTradeMarkers([]);
                 const status = err?.response?.status;
                 if (status === 429) {
                     setError("Rate limited while loading market data. Retrying shortly usually resolves it.");
@@ -281,6 +319,15 @@ const StockDetail = () => {
                         </span>
                     )}
                 </div>
+
+                {position && (
+                    <div className="flex items-center gap-1 px-3 py-1.5 bg-white/7 border border-white/10 rounded text-xs font-semibold text-white ml-2">
+                        <span>{position.shares}@{position.entryPrice}</span>
+                        <span className={position.pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            ({position.pnl >= 0 ? '+' : ''}{position.pnl.toFixed(2)})
+                        </span>
+                    </div>
+                )}
 
                 <div className="flex bg-white/7 p-0.5 rounded border border-white/10 ml-2">
                     {TIMEFRAMES.map(tf => (
@@ -423,6 +470,8 @@ const StockDetail = () => {
                                 onCrosshairMove={setHoveredBar}
                                 onRemovePane={handleRemovePane}
                                 onRemoveOverlay={handleRemoveOverlay}
+                                position={position}
+                                tradeMarkers={tradeMarkers}
                             />
                         </ErrorBoundary>
                     )}

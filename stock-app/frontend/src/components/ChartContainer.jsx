@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
-import { createChart, CrosshairMode, CandlestickSeries, BarSeries, AreaSeries, LineSeries } from 'lightweight-charts';
+import { createChart, CrosshairMode, CandlestickSeries, BarSeries, AreaSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 import { X } from 'lucide-react';
 import DrawingOverlay from './DrawingOverlay';
 
@@ -72,6 +72,82 @@ const solidColor = (hex) => {
     return hex.length > 7 ? hex.slice(0, 7) : hex;
 };
 
+const toEpochMillis = (value) => {
+    if (value === undefined || value === null) return Number.NaN;
+    if (typeof value === 'number') return value * 1000;
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+};
+
+const toDayKey = (epochMillis) => {
+    if (!Number.isFinite(epochMillis)) return '';
+    return new Date(epochMillis).toISOString().slice(0, 10);
+};
+
+const buildSeriesMarkers = (rows, tradeMarkers = []) => {
+    if (!Array.isArray(rows) || rows.length === 0 || !Array.isArray(tradeMarkers) || tradeMarkers.length === 0) {
+        return [];
+    }
+
+    const candles = rows
+        .map((row) => {
+            const epochMillis = toEpochMillis(row.time);
+            if (!Number.isFinite(epochMillis)) return null;
+            return {
+                time: row.time,
+                epochMillis,
+                dayKey: toDayKey(epochMillis),
+            };
+        })
+        .filter(Boolean);
+
+    if (candles.length === 0) return [];
+
+    return tradeMarkers
+        .map((marker) => {
+            const markerMillis = toEpochMillis(marker?.occurred_at || marker?.trade_date);
+            if (!Number.isFinite(markerMillis)) return null;
+
+            let resolvedCandle = null;
+            if (marker?.has_exact_time) {
+                for (const candle of candles) {
+                    if (candle.epochMillis <= markerMillis) {
+                        resolvedCandle = candle;
+                    } else {
+                        break;
+                    }
+                }
+                resolvedCandle = resolvedCandle ?? candles[0];
+            } else {
+                const dayKey = String(marker?.trade_date || '').slice(0, 10) || toDayKey(markerMillis);
+                resolvedCandle = candles.find((candle) => candle.dayKey === dayKey) ?? null;
+            }
+
+            if (!resolvedCandle) return null;
+
+            const side = String(marker?.side || '').toLowerCase() === 'sell' ? 'sell' : 'buy';
+            const units = Number(marker?.units);
+            const price = Number(marker?.price);
+            const textParts = [side === 'buy' ? 'B' : 'S'];
+
+            if (Number.isFinite(units) && units !== 0) {
+                textParts.push(`${Math.abs(units)}`);
+            }
+            if (Number.isFinite(price) && price > 0) {
+                textParts.push(`@${price.toFixed(2)}`);
+            }
+
+            return {
+                time: resolvedCandle.time,
+                position: side === 'buy' ? 'belowBar' : 'aboveBar',
+                shape: side === 'buy' ? 'arrowUp' : 'arrowDown',
+                color: side === 'buy' ? '#26a69a' : '#ef5350',
+                text: textParts.join(' '),
+            };
+        })
+        .filter(Boolean);
+};
+
 // Format a unix timestamp (seconds) into a readable crosshair label
 function formatCrosshairTime(time) {
     if (time === undefined || time === null) return '';
@@ -105,10 +181,13 @@ const ChartPane = forwardRef(({
     onCrosshairMove,
     onClose,
     onRemoveOverlay,
+    position,
+    tradeMarkers = [],
 }, ref) => {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const mainSeriesRef = useRef(null);
+    const markerPluginRef = useRef(null);
     const seriesRefs = useRef({});
     const [isReady, setIsReady] = useState(false);
     const [timeLabel, setTimeLabel] = useState(null); // { x: number, text: string } | null
@@ -158,6 +237,9 @@ const ChartPane = forwardRef(({
         }
 
         mainSeriesRef.current = series;
+        if (id === 'main') {
+            markerPluginRef.current = createSeriesMarkers(series, []);
+        }
         setIsReady(true);
 
         chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -192,6 +274,7 @@ const ChartPane = forwardRef(({
             setIsReady(false);
             setTimeLabel(null);
             seriesRefs.current = {};
+            markerPluginRef.current = null;
             chart.remove();
         };
     }, [id, type, isLast, color]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -208,7 +291,14 @@ const ChartPane = forwardRef(({
             mainSeriesRef.current.setData(seriesData);
         }
 
+        if (id === 'main' && markerPluginRef.current) {
+            markerPluginRef.current.setMarkers(buildSeriesMarkers(safeData, tradeMarkers));
+        }
+
         const currentIds = new Set(overlays.map(o => o.id));
+        // Include position line in series tracking
+        if (position) currentIds.add('__position__');
+        
         Object.keys(seriesRefs.current).forEach(sid => {
             if (!currentIds.has(sid)) {
                 try { chartRef.current.removeSeries(seriesRefs.current[sid]); } catch {}
@@ -228,7 +318,28 @@ const ChartPane = forwardRef(({
             const ovData = prepareData(ov.data);
             seriesRefs.current[ov.id].setData(ovData);
         });
-    }, [data, overlays, isReady, type]);
+
+        // ── Add position entry line ────────────────────────────────────────
+        if (position && id === 'main') {
+            if (!seriesRefs.current['__position__']) {
+                seriesRefs.current['__position__'] = chartRef.current.addSeries(LineSeries, {
+                    color: '#FFA500',
+                    lineWidth: 2,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    lineStyle: 2, // Dashed line
+                });
+            }
+            // Create a horizontal line at the entry price
+            if (safeData.length > 0) {
+                const positionLine = safeData.map(({ time }) => ({
+                    time,
+                    value: position.entryPrice
+                }));
+                seriesRefs.current['__position__'].setData(positionLine);
+            }
+        }
+    }, [data, overlays, isReady, type, position, id, tradeMarkers]);
 
     // ── Handle container resize ────────────────────────────────────────────
     useEffect(() => {
@@ -356,6 +467,8 @@ const ChartContainer = ({
     onCrosshairMove,
     onRemovePane,
     onRemoveOverlay,
+    position,
+    tradeMarkers = [],
 }) => {
     const paneRefs = useRef({});
     const isSyncing = useRef(false);
@@ -455,6 +568,8 @@ const ChartContainer = ({
                 activeTool={activeTool}
                 onCrosshairMove={onCrosshairMove}
                 onRemoveOverlay={onRemoveOverlay}
+                position={position}
+                tradeMarkers={tradeMarkers}
             />
 
             {/* ── Oscillator panes ── */}

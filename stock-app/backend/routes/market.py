@@ -1,5 +1,7 @@
 from flask import Blueprint, jsonify, request
+from models import BrokerageAccount, SnapTradeUser
 from services.data_fetcher import DataFetcher
+from services.snaptrade_service import decrypt_secret, get_trade_markers_for_ticker, period_to_date_range
 from services.technical import TechnicalService
 
 market_bp = Blueprint('market', __name__)
@@ -46,6 +48,37 @@ def get_history(ticker):
         enriched_data = enriched_data[-target_len:]
         
     return jsonify(enriched_data)
+
+
+@market_bp.route('/stock/<ticker>/trade-markers')
+def get_trade_markers(ticker):
+    period = request.args.get('period', '1mo')
+
+    user = SnapTradeUser.query.first()
+    if not user:
+        return jsonify([])
+
+    accounts = BrokerageAccount.query.filter_by(
+        snaptrade_user_id=user.snaptrade_user_id,
+        is_active=True,
+    ).all()
+    if not accounts:
+        return jsonify([])
+
+    try:
+        user_secret = decrypt_secret(user.user_secret)
+        start_date, end_date = period_to_date_range(period)
+        markers = get_trade_markers_for_ticker(
+            snaptrade_user_id=user.snaptrade_user_id,
+            user_secret=user_secret,
+            account_ids=[account.account_id for account in accounts],
+            ticker=ticker,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return jsonify(markers)
+    except Exception:
+        return jsonify([])
 
 @market_bp.route('/stock/<ticker>/indicators')
 def get_stock_indicators(ticker):

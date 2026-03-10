@@ -81,6 +81,8 @@ const StockChart = ({
     drawings = [],
     onAddDrawing,
     activeTool = 'none',
+    position,
+    tradeMarkers = [],
 }) => {
     const { panes, mainOverlays } = useMemo(() => {
         if (!Array.isArray(indicatorData) || indicatorData.length === 0) {
@@ -281,6 +283,8 @@ const StockChart = ({
                 drawings={drawings}
                 onAddDrawing={onAddDrawing}
                 activeTool={activeTool}
+                position={position}
+                tradeMarkers={tradeMarkers}
             />
         </div>
     );

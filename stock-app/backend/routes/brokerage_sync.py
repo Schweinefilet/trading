@@ -16,7 +16,7 @@ brokerage_bp = Blueprint("brokerage", __name__)
 
 
 def _bust_analytics_cache():
-    for tf in ['1d', '1w', '1m', '3mo', '6mo', '1y', '2y']:
+    for tf in ['1d', '1w', '1m', '3mo', '6mo', '1y', '2y', 'max']:
         CacheService.delete('__portfolio__', 'portfolio_analytics', f'v1_{tf}')
 
 

@@ -685,7 +685,8 @@ const Portfolio = () => {
     const [allocationMode, setAllocationMode] = useState('ticker');
     const [showAllRiskMetrics, setShowAllRiskMetrics] = useState(false);
     const [selectedTicker, setSelectedTicker] = useState(null);
-    const [valueHistoryTimeframe, setValueHistoryTimeframe] = useState('1y');
+    const [valueHistoryTimeframe, setValueHistoryTimeframe] = useState('1w');
+    const [rebuildingHistory, setRebuildingHistory] = useState(false);
 
     // Brokerage sync state (shared hook)
     const brokerage = useBrokerageSync({ lazy: true });
@@ -723,13 +724,32 @@ const Portfolio = () => {
         }
     }, []);
 
+    const rebuildHistory = useCallback(async () => {
+        if (rebuildingHistory) return;
+        setRebuildingHistory(true);
+        try {
+            const res = await axios.get('/api/portfolio/analytics', {
+                params: {
+                    timeframe: valueHistoryTimeframe,
+                    force: '1',
+                    rebuild_backfill: '1',
+                }
+            });
+            setData(res.data);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setRebuildingHistory(false);
+        }
+    }, [rebuildingHistory, valueHistoryTimeframe]);
+
     useEffect(() => { fetchPortfolio(valueHistoryTimeframe); }, [fetchPortfolio, valueHistoryTimeframe]);
 
-    // Poll every 60 seconds when tab is visible
+    // Poll every 60 seconds when tab is visible - force refresh to bypass cache
     useEffect(() => {
         const interval = setInterval(() => {
             if (document.visibilityState === 'visible') {
-                refreshPortfolio(valueHistoryTimeframe);
+                refreshPortfolio(valueHistoryTimeframe, true); // Pass true to force refresh
             }
         }, 60_000);
         return () => clearInterval(interval);
@@ -806,6 +826,8 @@ const Portfolio = () => {
                     ? String(date).slice(11, 16)           // "HH:MM"
                     : valueHistoryTimeframe === '1w'
                         ? String(date).slice(5, 16)        // "MM-DD HH:MM"
+                        : valueHistoryTimeframe === 'max'
+                            ? String(date).slice(2, 10)    // "YY-MM-DD"
                         : String(date).slice(5, 10);       // "MM-DD"
                 return { date, shortDate, value };
             })
@@ -994,7 +1016,23 @@ const Portfolio = () => {
                         <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
                             Portfolio Value Over Time
                         </h3>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                            <button
+                                onClick={rebuildHistory}
+                                disabled={rebuildingHistory}
+                                className="text-xs font-bold px-3 py-1.5 rounded-lg transition-all inline-flex items-center gap-1.5"
+                                style={{
+                                    background: 'rgba(255,255,255,0.08)',
+                                    color: rebuildingHistory ? 'var(--text-tertiary)' : 'var(--text-secondary)',
+                                    border: '1px solid rgba(255,255,255,0.12)',
+                                    opacity: rebuildingHistory ? 0.7 : 1,
+                                    cursor: rebuildingHistory ? 'not-allowed' : 'pointer',
+                                }}
+                                title="Rebuild and persist historical backfill from trade history"
+                            >
+                                <RefreshCw className={`h-3.5 w-3.5 ${rebuildingHistory ? 'animate-spin' : ''}`} />
+                                {rebuildingHistory ? 'Rebuilding…' : 'Rebuild History'}
+                            </button>
                             {[
                                 { key: '1d', label: '1D' },
                                 { key: '1w', label: '1W' },
@@ -1003,6 +1041,7 @@ const Portfolio = () => {
                                 { key: '6mo', label: '6M' },
                                 { key: '1y', label: '1Y' },
                                 { key: '2y', label: '2Y' },
+                                { key: 'max', label: 'ALL' },
                             ].map(({ key, label }) => (
                                 <button
                                     key={key}
@@ -1042,7 +1081,7 @@ const Portfolio = () => {
                                         color: '#fff',
                                     }}
                                 />
-                                <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                                <Line type="monotone" dataKey="value" stroke="#FF8C42" strokeWidth={2.5} dot={false} isAnimationActive={false} />
                             </LineChart>
                         </ResponsiveContainer>
                     </div>
@@ -1097,9 +1136,20 @@ const Portfolio = () => {
                             style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
                         >
                             <h3 className="text-sm font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Holdings</h3>
-                            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                                {safeHoldings.length} position{safeHoldings.length !== 1 ? 's' : ''}
-                            </span>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => refreshPortfolio(valueHistoryTimeframe, true)}
+                                    disabled={loading}
+                                    className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    style={{ color: 'var(--text-secondary)' }}
+                                    title="Reload holdings data"
+                                >
+                                    ↻ Reload
+                                </button>
+                                <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                                    {safeHoldings.length} position{safeHoldings.length !== 1 ? 's' : ''}
+                                </span>
+                            </div>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
