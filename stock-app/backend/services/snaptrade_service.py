@@ -452,11 +452,65 @@ def normalize_activity_marker(activity, ticker: str, account_id: str | None = No
 
 
 def normalize_activity_record(activity, account_id: str | None = None) -> dict | None:
-    """Normalize a BUY/SELL activity without pre-filtering on a ticker."""
-    activity_ticker = _extract_symbol_ticker(_attr_or_key(activity, 'symbol'))
-    if not activity_ticker:
+    """
+    Normalize an activity record for portfolio reconstruction.
+    Handles BUY, SELL, DEPOSIT, WITHDRAWAL, DIVIDEND.
+    Returns a dict with 'activity_type' so callers can distinguish event kinds.
+    """
+    activity_type = str(_attr_or_key(activity, 'type', default='') or '').upper()
+
+    trade_dt = _parse_datetime(
+        _attr_or_key(activity, 'trade_date') or _attr_or_key(activity, 'settlement_date')
+    )
+    if trade_dt is None:
         return None
-    return normalize_activity_marker(activity, ticker=activity_ticker, account_id=account_id)
+
+    units = _to_float(_attr_or_key(activity, 'units'))
+    price = _to_float(_attr_or_key(activity, 'price'))
+    # 'amount' is positive for credits (deposits, dividends, sell proceeds)
+    # and negative for debits (withdrawals, buy costs) in SnapTrade.
+    amount = _to_float(_attr_or_key(activity, 'amount'))
+    fee = _to_float(_attr_or_key(activity, 'fee')) or 0.0
+
+    if activity_type in ('BUY', 'SELL'):
+        activity_ticker = _extract_symbol_ticker(_attr_or_key(activity, 'symbol'))
+        if not activity_ticker:
+            return None
+        if not units or not price:
+            return None
+        return {
+            'id': _attr_or_key(activity, 'id') or f"{account_id}:{activity_type}:{trade_dt.isoformat()}",
+            'activity_type': activity_type,
+            'ticker': activity_ticker,
+            'side': 'buy' if activity_type == 'BUY' else 'sell',
+            'occurred_at': trade_dt.isoformat(),
+            'trade_date': trade_dt.date().isoformat(),
+            'units': abs(units),
+            'price': abs(price),
+            'amount': amount,
+            'fee': fee,
+            'description': _attr_or_key(activity, 'description', default='') or '',
+            'account_id': account_id,
+        }
+
+    if activity_type in ('DEPOSIT', 'WITHDRAWAL', 'DIVIDEND'):
+        if amount is None:
+            return None
+        return {
+            'id': _attr_or_key(activity, 'id') or f"{account_id}:{activity_type}:{trade_dt.isoformat()}",
+            'activity_type': activity_type,
+            'ticker': None,
+            'occurred_at': trade_dt.isoformat(),
+            'trade_date': trade_dt.date().isoformat(),
+            'units': None,
+            'price': None,
+            'amount': amount,  # signed: positive = cash in, negative = cash out
+            'fee': fee,
+            'description': _attr_or_key(activity, 'description', default='') or '',
+            'account_id': account_id,
+        }
+
+    return None
 
 
 def period_to_date_range(period: str | None) -> tuple[date, date]:

@@ -4,6 +4,11 @@ import { TrendingUp, TrendingDown, Clock, Plus, X, Check, ChevronDown, List } fr
 import { Link } from 'react-router-dom';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip } from 'recharts';
 import ParticlesBg from '../components/ParticlesBg';
+import {
+    buildPortfolioAnalyticsParams,
+    buildSyncedPortfolioHistory,
+    PORTFOLIO_HISTORY_ANCHOR_DATE,
+} from '../utils/portfolioHistory';
 
 // ── Market strip tickers ──────────────────────────────────────────────────────
 const MARKET_TICKERS = [
@@ -569,6 +574,7 @@ const WatchlistModal = ({ title, watchlist, onClose, onSave }) => {
 const Dashboard = () => {
     const [portfolio, setPortfolio] = useState(null);
     const [portfolioTimeframe, setPortfolioTimeframe] = useState('1w');
+    const [portfolioLastSyncedAt, setPortfolioLastSyncedAt] = useState(null);
 
     // Load all three watchlists from localStorage
     const [watchlists, setWatchlists] = useState(() => {
@@ -612,9 +618,12 @@ const Dashboard = () => {
 
     useEffect(() => {
         axios.get('/api/portfolio/analytics', {
-            params: { timeframe: portfolioTimeframe }
+            params: buildPortfolioAnalyticsParams(portfolioTimeframe)
         })
-            .then(r => setPortfolio(r.data))
+            .then(r => {
+                setPortfolio(r.data);
+                setPortfolioLastSyncedAt(new Date());
+            })
             .catch(() => {});
     }, [portfolioTimeframe]);
 
@@ -622,8 +631,11 @@ const Dashboard = () => {
     useEffect(() => {
         const id = setInterval(() => {
             if (document.visibilityState !== 'visible') return;
-            axios.get('/api/portfolio/analytics', { params: { timeframe: portfolioTimeframe } })
-                .then(r => setPortfolio(r.data))
+            axios.get('/api/portfolio/analytics', { params: buildPortfolioAnalyticsParams(portfolioTimeframe) })
+                .then(r => {
+                    setPortfolio(r.data);
+                    setPortfolioLastSyncedAt(new Date());
+                })
                 .catch(() => {});
             setPollTick(t => t + 1);
         }, 60_000);
@@ -784,24 +796,10 @@ const Dashboard = () => {
         Promise.all(workers).catch(() => {});
     }, [top12ForMiniCharts, miniChartsMap]);
 
-    const portfolioValueHistory = useMemo(() => {
-        const series = Array.isArray(portfolio?.value_history) ? portfolio.value_history : [];
-        return series
-            .map((p) => {
-                const value = Number(p?.value);
-                const date = p?.date;
-                if (!Number.isFinite(value) || !date) return null;
-                const shortDate = portfolioTimeframe === '1d'
-                    ? String(date).slice(11, 16)
-                    : portfolioTimeframe === '1w'
-                        ? String(date).slice(5, 16)
-                        : portfolioTimeframe === 'max'
-                            ? String(date).slice(2, 10)
-                        : String(date).slice(5, 10);
-                return { date, shortDate, value };
-            })
-            .filter(Boolean);
-    }, [portfolio, portfolioTimeframe]);
+    const portfolioValueHistory = useMemo(
+        () => buildSyncedPortfolioHistory(portfolio?.value_history, portfolioTimeframe),
+        [portfolio?.value_history, portfolioTimeframe]
+    );
 
     return (
         <>
@@ -819,6 +817,11 @@ const Dashboard = () => {
                             <Clock className="h-4 w-4 mr-2" style={{ color: 'var(--accent)' }} />
                             Portfolio Overview
                         </h2>
+                        <p className="text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                            Last synced: {portfolioLastSyncedAt
+                                ? portfolioLastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                                : 'Waiting for first refresh'}
+                        </p>
                         <div className="mt-4 flex flex-col sm:flex-row sm:items-end sm:space-x-8">
                             <div>
                                 <p className="text-3xl sm:text-4xl font-black text-white">
@@ -872,6 +875,9 @@ const Dashboard = () => {
                                         ))}
                                     </div>
                                 </div>
+                                <p className="text-[10px] mb-2" style={{ color: 'var(--text-tertiary)' }}>
+                                    Synced with Portfolio page graph (same anchor/date logic, currently anchored at {PORTFOLIO_HISTORY_ANCHOR_DATE}).
+                                </p>
                                 <div className="h-44">
                                     <ResponsiveContainer width="100%" height="100%">
                                     <LineChart data={portfolioValueHistory}>

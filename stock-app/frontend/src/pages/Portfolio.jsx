@@ -11,6 +11,13 @@ import ParticlesBg from '../components/ParticlesBg';
 import BrokerageManager from '../components/BrokerageManager';
 import StockIndicatorsModal from '../components/StockIndicatorsModal';
 import { useBrokerageSync } from '../hooks/useBrokerageSync';
+import {
+    PORTFOLIO_HISTORY_ANCHOR_DATE,
+    PORTFOLIO_HISTORY_ANCHOR_VALUE,
+    PORTFOLIO_HISTORY_VALUE_FLOOR,
+    buildPortfolioAnalyticsParams,
+    buildSyncedPortfolioHistory,
+} from '../utils/portfolioHistory';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
 
@@ -702,7 +709,7 @@ const Portfolio = () => {
         setLoading(true);
         try {
             const res = await axios.get('/api/portfolio/analytics', {
-                params: { timeframe }
+                params: buildPortfolioAnalyticsParams(timeframe)
             });
             setData(res.data);
         } catch (e) {
@@ -715,7 +722,7 @@ const Portfolio = () => {
     // Silent background refresh — no loading spinner, used for polling and forced updates
     const refreshPortfolio = useCallback(async (timeframe = '1y', force = false) => {
         try {
-            const params = { timeframe };
+            const params = buildPortfolioAnalyticsParams(timeframe);
             if (force) params.force = '1';
             const res = await axios.get('/api/portfolio/analytics', { params });
             setData(res.data);
@@ -729,11 +736,10 @@ const Portfolio = () => {
         setRebuildingHistory(true);
         try {
             const res = await axios.get('/api/portfolio/analytics', {
-                params: {
-                    timeframe: valueHistoryTimeframe,
+                params: buildPortfolioAnalyticsParams(valueHistoryTimeframe, {
                     force: '1',
                     rebuild_backfill: '1',
-                }
+                })
             });
             setData(res.data);
         } catch (e) {
@@ -816,23 +822,12 @@ const Portfolio = () => {
             .sort((a, b) => b.value - a.value);
     }, [safeHoldings, allocationMode]);
 
-    const valueHistoryChartData = useMemo(() => {
-        return safeValueHistory
-            .map((p) => {
-                const value = Number(p?.value);
-                const date = p?.date;
-                if (!Number.isFinite(value) || !date) return null;
-                const shortDate = valueHistoryTimeframe === '1d'
-                    ? String(date).slice(11, 16)           // "HH:MM"
-                    : valueHistoryTimeframe === '1w'
-                        ? String(date).slice(5, 16)        // "MM-DD HH:MM"
-                        : valueHistoryTimeframe === 'max'
-                            ? String(date).slice(2, 10)    // "YY-MM-DD"
-                        : String(date).slice(5, 10);       // "MM-DD"
-                return { date, shortDate, value };
-            })
-            .filter(Boolean);
-    }, [safeValueHistory, valueHistoryTimeframe]);
+    const valueHistoryChartData = useMemo(
+        () => buildSyncedPortfolioHistory(safeValueHistory, valueHistoryTimeframe),
+        [safeValueHistory, valueHistoryTimeframe]
+    );
+
+            const hasHistory = valueHistoryChartData.length > 0;
 
     const riskItems = [
         {
@@ -1010,7 +1005,7 @@ const Portfolio = () => {
                 </div>
             )}
 
-            {!isEmpty && valueHistoryChartData.length > 0 && (
+            {valueHistoryChartData.length > 0 && (
                 <div className="glass p-5">
                     <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
                         <h3 className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
@@ -1068,11 +1063,17 @@ const Portfolio = () => {
                                     axisLine={false}
                                     tickLine={false}
                                     width={84}
-                                    domain={['auto', 'auto']}
+                                    domain={[10000, 'auto']}
                                     tickFormatter={(v) => `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                                 />
                                 <RechartsTooltip
-                                    formatter={(v) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, 'Portfolio Value']}
+                                    formatter={(v, name, props) => {
+                                        const n = Number(v);
+                                        const label = props?.payload?.isInferred ? 'Est. Portfolio Value' : 'Portfolio Value';
+                                        return [Number.isFinite(n)
+                                            ? `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                                            : 'No data', label];
+                                    }}
                                     labelFormatter={(l, payload) => payload?.[0]?.payload?.date || l}
                                     contentStyle={{
                                         background: 'rgba(0,0,0,0.9)',
@@ -1081,9 +1082,37 @@ const Portfolio = () => {
                                         color: '#fff',
                                     }}
                                 />
-                                <Line type="monotone" dataKey="value" stroke="#FF8C42" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                                {/* Solid line for known (real) points */}
+                                <Line
+                                    type="monotone"
+                                    dataKey={(p) => p.isInferred ? null : p.value}
+                                    name="Portfolio Value"
+                                    stroke="#FF8C42"
+                                    strokeWidth={2.5}
+                                    dot={false}
+                                    isAnimationActive={false}
+                                    connectNulls={false}
+                                />
+                                {/* Dashed line for inferred points */}
+                                <Line
+                                    type="monotone"
+                                    dataKey={(p) => p.isInferred ? p.value : null}
+                                    name="Est. Portfolio Value"
+                                    stroke="#FF8C42"
+                                    strokeWidth={2}
+                                    strokeDasharray="5 4"
+                                    dot={false}
+                                    isAnimationActive={false}
+                                    connectNulls={false}
+                                />
                             </LineChart>
                         </ResponsiveContainer>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                        <span>Anchored at <strong style={{ color: 'var(--text-secondary)' }}>${PORTFOLIO_HISTORY_ANCHOR_VALUE.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> on {PORTFOLIO_HISTORY_ANCHOR_DATE}</span>
+                        <span>Pre-anchor values (Mar 4-10) are manually entered</span>
+                        <span>Floor <strong style={{ color: 'var(--text-secondary)' }}>${PORTFOLIO_HISTORY_VALUE_FLOOR.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong> applied to estimates</span>
+                        <span style={{ opacity: 0.7 }}><span style={{ borderBottom: '1.5px dashed #FF8C42', paddingBottom: '1px' }}>—</span> estimated &nbsp; <span style={{ borderBottom: '2px solid #FF8C42', paddingBottom: '1px' }}>—</span> confirmed</span>
                     </div>
                 </div>
             )}
@@ -1100,9 +1129,13 @@ const Portfolio = () => {
                         }}
                     >
                         <Zap className="h-16 w-16 mb-6" style={{ color: 'rgba(255,255,255,0.15)' }} />
-                        <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-secondary)' }}>Portfolio is empty</h2>
+                        <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                            {hasHistory ? 'No active positions right now' : 'Portfolio is empty'}
+                        </h2>
                         <p className="mb-8 text-sm text-center max-w-sm" style={{ color: 'var(--text-tertiary)' }}>
-                            Connect a brokerage account or add a position manually to track your investments.
+                            {hasHistory
+                                ? 'You are currently in cash. Historical portfolio performance is still shown above.'
+                                : 'Connect a brokerage account or add a position manually to track your investments.'}
                         </p>
                         <button
                             onClick={() => setShowAddModal(true)}
@@ -1110,7 +1143,7 @@ const Portfolio = () => {
                             style={{ background: 'var(--accent)', color: '#000', borderRadius: 'var(--radius-btn)' }}
                         >
                             <Plus className="h-5 w-5" />
-                            <span>Add Your First Position</span>
+                            <span>{hasHistory ? 'Add a Position' : 'Add Your First Position'}</span>
                         </button>
                     </div>
                     <BrokerageManager

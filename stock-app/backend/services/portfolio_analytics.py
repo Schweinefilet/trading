@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from .data_fetcher import DataFetcher
 
 class PortfolioAnalytics:
@@ -11,20 +11,44 @@ class PortfolioAnalytics:
         """
         self.positions = positions
         self.fetcher = DataFetcher()
+        self._value_history_debug = None
 
-    def get_all_metrics(self, timeframe='1y', interval='1d', total_cash=0.0, start_date=None, snapshots=None, trade_activities=None, precomputed_trade_backfill=None):
+    def get_all_metrics(self, timeframe='1y', interval='1d', total_cash=0.0, start_date=None, snapshots=None, daily_balance_history=None, daily_snapshot_history=None, activity_events=None, anchor_start_date=None, anchor_start_value=None, value_floor=None):
+        self._value_history_debug = None
         if not self.positions:
-            return {
+            # No current positions (100% cash) — still build value history from
+            # balance history / snapshots so the chart shows historical data correctly.
+            value_history = self.get_value_history(
+                holdings=[],
+                timeframe=timeframe,
+                interval=interval,
+                total_cash=total_cash,
+                pre_buy_cash=total_cash,
+                start_date=start_date,
+                snapshots=snapshots or {},
+                daily_balance_history=daily_balance_history,
+                daily_snapshot_history=daily_snapshot_history,
+                activity_events=activity_events,
+                anchor_start_date=anchor_start_date,
+                anchor_start_value=anchor_start_value,
+                value_floor=value_floor,
+            )
+            payload = {
                 'summary': {
-                    'total_value': 0,
+                    'total_value': total_cash,
+                    'stocks_value': 0,
                     'total_gain_loss': 0,
                     'total_gain_loss_pct': 0,
                 },
                 'holdings': [],
-                'value_history': [],
+                'value_history': value_history,
                 'risk': {},
-                'correlation': {}
+                'correlation': {},
+                'has_data_gaps': any(p.get('value') is None for p in value_history),
             }
+            if self._value_history_debug is not None:
+                payload['value_history_debug'] = self._value_history_debug
+            return payload
 
         tickers = [p['ticker'] for p in self.positions]
 
@@ -36,12 +60,6 @@ class PortfolioAnalytics:
         risk = self.get_risk_metrics(basic['holdings'], returns_map=returns_map_daily)
         correlation = self.get_correlation_matrix(returns_map=returns_map_daily)
 
-        # Value history uses the selected interval (intraday for 1d/1w views).
-        returns_map_hist = (
-            self._build_returns_map(tickers, period=timeframe, interval=interval)
-            if interval != '1d'
-            else returns_map_daily
-        )
         # Pre-buy flat line = cash held before any positions were opened.
         # That equals today's cash + the cost basis of all current positions
         # (i.e. the full amount the user had before deploying into stocks).
@@ -51,19 +69,21 @@ class PortfolioAnalytics:
 
         value_history = self.get_value_history(
             basic['holdings'],
-            returns_map=returns_map_hist,
             timeframe=timeframe,
             interval=interval,
             total_cash=total_cash,
             pre_buy_cash=pre_buy_cash,
             start_date=start_date,
             snapshots=snapshots,
-            trade_activities=trade_activities,
-            current_total_value=stocks_value + total_cash,
-            precomputed_trade_backfill=precomputed_trade_backfill,
+            daily_balance_history=daily_balance_history,
+            daily_snapshot_history=daily_snapshot_history,
+            activity_events=activity_events,
+            anchor_start_date=anchor_start_date,
+            anchor_start_value=anchor_start_value,
+            value_floor=value_floor,
         )
 
-        return {
+        payload = {
             'summary': {
                 'total_value': stocks_value + total_cash,
                 'stocks_value': stocks_value,
@@ -73,8 +93,12 @@ class PortfolioAnalytics:
             'holdings': basic['holdings'],
             'value_history': value_history,
             'risk': risk,
-            'correlation': correlation
+            'correlation': correlation,
+            'has_data_gaps': any(p.get('value') is None for p in value_history),
         }
+        if self._value_history_debug is not None:
+            payload['value_history_debug'] = self._value_history_debug
+        return payload
 
     def _build_returns_map(self, tickers, period='1y', interval='1d'):
         returns_map = {}
@@ -138,118 +162,6 @@ class PortfolioAnalytics:
             return None
         return (pd.Timestamp.utcnow().normalize() - pd.Timedelta(days=days - 1)).date()
 
-    def _reconstruct_from_trade_activities(self, trade_activities, current_total_value, timeframe='1y', cash_floor=0.0):
-        if not trade_activities:
-            return []
-
-        rows = []
-        tickers = set()
-        for item in trade_activities:
-            trade_dt = self._parse_trade_dt(item.get('occurred_at') or item.get('trade_date'))
-            if trade_dt is None:
-                continue
-            ticker = str(item.get('ticker') or '').upper()
-            side = str(item.get('side') or item.get('type') or '').lower()
-            units = float(item.get('units') or 0)
-            price = float(item.get('price') or 0)
-            fee = float(item.get('fee') or 0)
-            if not ticker or units <= 0 or price <= 0 or side not in {'buy', 'sell'}:
-                continue
-            rows.append({
-                'dt': trade_dt,
-                'date': trade_dt.date(),
-                'ticker': ticker,
-                'side': side,
-                'units': units,
-                'price': price,
-                'fee': fee,
-            })
-            tickers.add(ticker)
-
-        if not rows or not tickers:
-            return []
-
-        rows.sort(key=lambda r: r['dt'])
-        first_trade_date = rows[0]['date']
-        start_filter = self._period_start(timeframe)
-
-        price_frames = {}
-        for ticker in sorted(tickers):
-            hist = self.fetcher.get_history(ticker, period='max', interval='1d')
-            if not hist:
-                continue
-            frame = pd.DataFrame(hist)
-            if frame.empty or 'Date' not in frame.columns or 'Close' not in frame.columns:
-                continue
-            frame['Date'] = pd.to_datetime(frame['Date'], errors='coerce').dt.date
-            frame['Close'] = pd.to_numeric(frame['Close'], errors='coerce')
-            frame = frame.dropna(subset=['Date', 'Close'])
-            if frame.empty:
-                continue
-            series = frame.drop_duplicates(subset=['Date']).set_index('Date')['Close'].sort_index()
-            price_frames[ticker] = series
-
-        if not price_frames:
-            return []
-
-        end_date = pd.Timestamp.utcnow().date()
-        full_index = pd.date_range(start=first_trade_date, end=end_date, freq='D').date
-        prices = pd.DataFrame(index=full_index)
-        for ticker, series in price_frames.items():
-            prices[ticker] = series.reindex(full_index).ffill().bfill()
-
-        if prices.empty:
-            return []
-
-        trades_by_date = defaultdict(list)
-        for row in rows:
-            trades_by_date[row['date']].append(row)
-        for date_key in trades_by_date:
-            trades_by_date[date_key].sort(key=lambda r: r['dt'])
-
-        holdings = defaultdict(float)
-        raw_series = []
-
-        for current_date in full_index:
-            for trade in trades_by_date.get(current_date, []):
-                if trade['side'] == 'buy':
-                    holdings[trade['ticker']] += trade['units']
-                else:
-                    holdings[trade['ticker']] -= trade['units']
-
-            equity_value = 0.0
-            for ticker, units in holdings.items():
-                if abs(units) < 1e-12:
-                    continue
-                px = prices.at[current_date, ticker] if ticker in prices.columns else np.nan
-                if pd.notna(px):
-                    equity_value += units * float(px)
-
-            raw_series.append((current_date, max(float(equity_value), 0.0)))
-
-        if not raw_series:
-            return []
-
-        raw_values = pd.Series([v for _, v in raw_series], index=[d for d, _ in raw_series], dtype='float64')
-        raw_values = raw_values.interpolate(method='linear').ffill().bfill()
-        if raw_values.empty:
-            return []
-
-        anchor = float(raw_values.iloc[-1])
-        target_equity = max(float(current_total_value) - float(cash_floor), 0.0)
-        if anchor > 0:
-            scaled_equity = raw_values * (target_equity / anchor)
-        else:
-            scaled_equity = raw_values * 0.0
-        adjusted = (scaled_equity + float(cash_floor)).clip(lower=float(cash_floor))
-
-        result = []
-        for d, v in adjusted.items():
-            if start_filter and d < start_filter:
-                continue
-            result.append({'date': str(d), 'value': float(v)})
-        return result
-
     def _slice_series_by_timeframe(self, series, timeframe='1y'):
         if not series:
             return []
@@ -268,18 +180,244 @@ class PortfolioAnalytics:
                 sliced.append(point)
         return sliced
 
-    def build_trade_backfill_series(self, trade_activities, current_total_value, total_cash=0.0):
-        """Build reusable all-time reconstructed daily series from trade activities."""
-        return self._reconstruct_from_trade_activities(
-            trade_activities=trade_activities,
-            current_total_value=current_total_value,
-            timeframe='max',
-            cash_floor=total_cash,
-        )
+    def _daily_activity_cash_deltas(self, activity_events):
+        """Build net cash delta per day from normalized activity events."""
+        deltas = defaultdict(float)
+        if not activity_events:
+            return deltas
+
+        for item in activity_events:
+            activity_type = str(item.get('activity_type') or item.get('type') or '').upper()
+            dt = self._parse_trade_dt(item.get('occurred_at') or item.get('trade_date'))
+            if dt is None:
+                continue
+            day = dt.date().strftime('%Y-%m-%d')
+
+            fee = float(item.get('fee') or 0.0)
+            amount = item.get('amount')
+            units = float(item.get('units') or 0.0)
+            price = float(item.get('price') or 0.0)
+
+            if activity_type == 'BUY':
+                deltas[day] -= (units * price + fee)
+            elif activity_type == 'SELL':
+                deltas[day] += (units * price - fee)
+            elif activity_type in {'DEPOSIT', 'WITHDRAWAL', 'DIVIDEND'}:
+                if amount is not None:
+                    deltas[day] += float(amount) - fee
+
+        return deltas
+
+    def _fetch_ticker_close_map(self, ticker):
+        """Return {YYYY-MM-DD: close} for a ticker using daily history."""
+        close_map = {}
+        if not ticker:
+            return close_map
+        try:
+            history = self.fetcher.get_history(ticker, period='max', interval='1d')
+        except Exception:
+            history = []
+        if not history:
+            return close_map
+
+        for row in history:
+            raw_date = row.get('Date')
+            raw_close = row.get('Close')
+            if raw_date is None:
+                continue
+            try:
+                day = str(raw_date)[:10]
+                dt = datetime.strptime(day, '%Y-%m-%d').date()
+            except Exception:
+                continue
+            try:
+                close = float(raw_close)
+            except Exception:
+                continue
+            close_map[dt.strftime('%Y-%m-%d')] = close
+        return close_map
+
+    def _build_close_on_or_before_lookup(self, close_map):
+        """Return a function day(date_obj)->latest close on or before that day."""
+        if not close_map:
+            return lambda _day: None
+
+        ordered = []
+        for day_str, close in close_map.items():
+            try:
+                day = datetime.strptime(day_str, '%Y-%m-%d').date()
+            except Exception:
+                continue
+            ordered.append((day, float(close)))
+        ordered.sort(key=lambda x: x[0])
+
+        if not ordered:
+            return lambda _day: None
+
+        days = [d for d, _ in ordered]
+        vals = [v for _, v in ordered]
+
+        def lookup(target_day):
+            lo = 0
+            hi = len(days) - 1
+            best_idx = -1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                if days[mid] <= target_day:
+                    best_idx = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            if best_idx < 0:
+                return None
+            return vals[best_idx]
+
+        return lookup
+
+    def _daily_total_value_deltas_from_activities(self, activity_events, anchor_start_date, end_date, include_debug=False):
+        """
+        Compute daily total-value deltas from activity logs using:
+          day_delta = net_cashflow(day) + (end_positions_value - start_positions_value)
+
+        This captures overnight holds correctly:
+        - If position carries overnight, next day P&L uses close_today - close_yesterday.
+        - If carried shares are sold next day, that day effect is sell_price - close_yesterday.
+
+        Assumption: anchor value reflects end-of-day state at anchor date.
+        Therefore positions at anchor baseline are treated as zero for forward inference.
+        """
+        deltas = defaultdict(float)
+        debug_rows = []
+        if anchor_start_date is None or end_date is None or end_date <= anchor_start_date:
+            return (deltas, debug_rows) if include_debug else deltas
+
+        # Group relevant events by calendar day (strictly after anchor day).
+        events_by_day = defaultdict(list)
+        trade_tickers = set()
+        for item in (activity_events or []):
+            activity_type = str(item.get('activity_type') or item.get('type') or '').upper()
+            dt = self._parse_trade_dt(item.get('occurred_at') or item.get('trade_date'))
+            if dt is None:
+                continue
+            day = dt.date()
+            if day <= anchor_start_date or day > end_date:
+                continue
+
+            ticker = str(item.get('ticker') or '').upper().strip() or None
+            if activity_type in {'BUY', 'SELL'} and ticker:
+                trade_tickers.add(ticker)
+
+            events_by_day[day].append((dt, item))
+
+        # Prepare EOD close lookup per ticker.
+        close_lookup_by_ticker = {}
+        for ticker in trade_tickers:
+            close_map = self._fetch_ticker_close_map(ticker)
+            close_lookup_by_ticker[ticker] = self._build_close_on_or_before_lookup(close_map)
+
+        # Simulate forward from anchor+1 with baseline zero positions at anchor EOD.
+        positions = defaultdict(float)
+        day = anchor_start_date + timedelta(days=1)
+        while day <= end_date:
+            day_cashflow = 0.0
+
+            # Start-of-day positions valued at previous day's close.
+            prev_day = day - timedelta(days=1)
+            start_positions_value = 0.0
+            for ticker, qty in positions.items():
+                if not qty:
+                    continue
+                lookup = close_lookup_by_ticker.get(ticker)
+                if not lookup:
+                    continue
+                prev_close = lookup(prev_day)
+                if prev_close is None:
+                    continue
+                start_positions_value += float(qty) * float(prev_close)
+
+            # Apply all events of the day in chronological order.
+            day_events = sorted(events_by_day.get(day, []), key=lambda pair: pair[0])
+            for _, item in day_events:
+                activity_type = str(item.get('activity_type') or item.get('type') or '').upper()
+                fee = float(item.get('fee') or 0.0)
+                amount = item.get('amount')
+                units = float(item.get('units') or 0.0)
+                price = float(item.get('price') or 0.0)
+                ticker = str(item.get('ticker') or '').upper().strip() or None
+
+                if activity_type == 'BUY' and ticker and units > 0 and price >= 0:
+                    day_cashflow -= (units * price + fee)
+                    positions[ticker] += units
+                elif activity_type == 'SELL' and ticker and units > 0 and price >= 0:
+                    day_cashflow += (units * price - fee)
+                    positions[ticker] -= units
+                elif activity_type in {'DEPOSIT', 'WITHDRAWAL', 'DIVIDEND'}:
+                    if amount is not None:
+                        day_cashflow += float(amount) - fee
+
+            # End-of-day positions valued at current day's close.
+            end_positions_value = 0.0
+            for ticker, qty in positions.items():
+                if not qty:
+                    continue
+                lookup = close_lookup_by_ticker.get(ticker)
+                if not lookup:
+                    continue
+                close_today = lookup(day)
+                if close_today is None:
+                    continue
+                end_positions_value += float(qty) * float(close_today)
+
+            market_value_change = float(end_positions_value - start_positions_value)
+            net_delta = float(day_cashflow + market_value_change)
+            day_str = day.strftime('%Y-%m-%d')
+            deltas[day_str] = net_delta
+            if include_debug:
+                debug_rows.append({
+                    'date': day_str,
+                    'cashflow_delta': float(day_cashflow),
+                    'start_positions_value': float(start_positions_value),
+                    'end_positions_value': float(end_positions_value),
+                    'market_value_change': market_value_change,
+                    'net_delta': net_delta,
+                })
+            day += timedelta(days=1)
+
+        return (deltas, debug_rows) if include_debug else deltas
+
+    def _infer_daily_series_from_anchors(self, series_days, known_values, daily_deltas):
+        """
+        Infer daily values from sparse anchors and per-day cash deltas.
+        EOD(day) = EOD(previous_day) + delta(day)
+        """
+        values = dict(known_values)
+        day_strs = [d.strftime('%Y-%m-%d') for d in series_days]
+
+        # Forward pass from earliest known anchors
+        for i in range(1, len(day_strs)):
+            prev_day = day_strs[i - 1]
+            day = day_strs[i]
+            if day in values:
+                continue
+            if prev_day in values:
+                values[day] = float(values[prev_day]) + float(daily_deltas.get(day, 0.0))
+
+        # Backward pass from latest known anchors
+        for i in range(len(day_strs) - 2, -1, -1):
+            day = day_strs[i]
+            next_day = day_strs[i + 1]
+            if day in values:
+                continue
+            if next_day in values:
+                values[day] = float(values[next_day]) - float(daily_deltas.get(next_day, 0.0))
+
+        return values
 
     def get_value_history(self, holdings, returns_map=None, timeframe='1y', interval='1d',
                           total_cash=0.0, pre_buy_cash=None, start_date=None, snapshots=None,
-                          trade_activities=None, current_total_value=None, precomputed_trade_backfill=None):
+                          daily_balance_history=None, daily_snapshot_history=None,
+                          activity_events=None, anchor_start_date=None, anchor_start_value=None,
+                          value_floor=None):
         """
         Build portfolio value history series.
 
@@ -300,111 +438,118 @@ class PortfolioAnalytics:
         flat_line_value = pre_buy_cash if pre_buy_cash is not None else total_cash
         intraday = interval not in ('1d', '1wk', '1mo')
 
-        if not holdings:
-            # No positions at all — if we have snapshots, return those; else empty.
-            if snapshots:
-                return [{'date': d, 'value': v} for d, v in sorted(snapshots.items())]
-            return []
-
-        # For intraday intervals, prioritize stored minute snapshots
+        # For intraday intervals, prioritize stored minute snapshots as-is.
         if intraday and snapshots:
-            # Build series from snapshots, sorted by timestamp
             series = []
             for timestamp in sorted(snapshots.keys()):
                 series.append({'date': timestamp, 'value': float(snapshots[timestamp])})
             return series
 
-        # For daily+ views, prefer persisted trade-replay backfill when available.
-        if not intraday and precomputed_trade_backfill:
-            reconstructed = self._slice_series_by_timeframe(precomputed_trade_backfill, timeframe=timeframe)
-            if reconstructed:
-                snapshot_daily = {
-                    str(k)[:10]: float(v)
-                    for k, v in snapshots.items()
-                    if isinstance(k, str) and len(k) >= 10
-                }
-                merged = []
-                for point in reconstructed:
-                    day = point['date'][:10]
-                    if day in snapshot_daily:
-                        merged.append({'date': point['date'], 'value': snapshot_daily[day]})
-                    else:
-                        merged.append(point)
-                return merged
+        # Daily history (no trade replay; no returns-model fallback):
+        # 1) SnapTrade daily balance history (primary)
+        # 2) Daily EOD snapshot history (fallback)
+        balance_map = {
+            str(p.get('date', ''))[:10]: float(p.get('value'))
+            for p in (daily_balance_history or [])
+            if str(p.get('date', ''))[:10]
+        }
+        snapshot_map = {
+            str(p.get('date', ''))[:10]: float(p.get('value'))
+            for p in (daily_snapshot_history or [])
+            if str(p.get('date', ''))[:10]
+        }
 
-        # Fallback: build reconstruction from activities when persisted series is missing.
-        if not intraday and trade_activities and current_total_value is not None:
-            reconstructed = self._reconstruct_from_trade_activities(
-                trade_activities=trade_activities,
-                current_total_value=current_total_value,
-                timeframe=timeframe,
-                cash_floor=total_cash,
+        if not balance_map and not snapshot_map:
+            # If user provided an anchor, we can still compute from activity cashflows.
+            if anchor_start_date is None or anchor_start_value is None:
+                return []
+
+        # Optional anchor-driven mode: compute from a user-provided start value.
+        if anchor_start_date is not None and anchor_start_value is not None:
+            start_filter = self._period_start(timeframe)
+            today = pd.Timestamp.utcnow().date()
+            start_day = anchor_start_date
+            if start_filter and start_day < start_filter:
+                start_day = start_filter
+            if start_day > today:
+                return []
+
+            daily_deltas, debug_rows = self._daily_total_value_deltas_from_activities(
+                activity_events=activity_events,
+                anchor_start_date=anchor_start_date,
+                end_date=today,
+                include_debug=True,
             )
-            if reconstructed:
-                snapshot_daily = {
-                    str(k)[:10]: float(v)
-                    for k, v in snapshots.items()
-                    if isinstance(k, str) and len(k) >= 10
-                }
-                merged = []
-                for point in reconstructed:
-                    day = point['date'][:10]
-                    if day in snapshot_daily:
-                        merged.append({'date': point['date'], 'value': snapshot_daily[day]})
-                    else:
-                        merged.append(point)
-                return merged
+            series_days = pd.date_range(start=start_day, end=today, freq='D').date
 
-        returns_map = returns_map or self._build_returns_map([h['ticker'] for h in holdings], period=timeframe)
-        weights = {h['ticker']: h['weight'] for h in holdings}
-        stock_total = float(sum(h.get('value', 0) for h in holdings))
+            self._value_history_debug = {
+                'mode': 'anchor_with_overnight_hold_logic',
+                'anchor_day_locked': True,
+                'anchor_date': anchor_start_date.strftime('%Y-%m-%d'),
+                'anchor_value': float(anchor_start_value),
+                'timeframe': str(timeframe),
+                'daily_delta_breakdown': debug_rows,
+            }
 
-        if stock_total <= 0:
-            return []
+            running_value = float(anchor_start_value)
+            floor = float(value_floor) if value_floor is not None else None
+            series = []
+            for day in series_days:
+                day_str = day.strftime('%Y-%m-%d')
 
-        returns_df = pd.DataFrame({
-            t: pd.to_numeric(s, errors='coerce')
-            for t, s in returns_map.items()
-            if t in weights
-        })
+                # Apply delta for the specific day only when it is strictly after anchor day.
+                if day > anchor_start_date:
+                    running_value += float(daily_deltas.get(day_str, 0.0))
 
-        returns_df.dropna(inplace=True)
-        if returns_df.empty:
-            return []
+                # Anchor day is immutable by user intent.
+                if day == anchor_start_date:
+                    value = float(anchor_start_value)
+                    running_value = float(anchor_start_value)
+                    is_known = False
+                # Known daily account values (real data), if present, take precedence.
+                elif day_str in balance_map:
+                    value = balance_map[day_str]
+                    running_value = float(value)
+                    is_known = True
+                elif day_str in snapshot_map:
+                    value = snapshot_map[day_str]
+                    running_value = float(value)
+                    is_known = True
+                else:
+                    value = running_value
+                    is_known = False
 
-        port_returns = pd.Series(0.0, index=returns_df.index)
-        for t, w in weights.items():
-            if t in returns_df.columns:
-                port_returns += returns_df[t] * w
+                # Apply floor to ALL values (real or inferred). Real balance snapshots can
+                # be incomplete when an account reports $0 due to a sync gap — the floor
+                # prevents those bad reads from dragging the chart below a known minimum.
+                if floor is not None:
+                    value = max(float(value), floor)
+                    running_value = max(running_value, floor)
 
-        growth = (1 + port_returns).cumprod()
-        if growth.empty or float(growth.iloc[-1]) == 0:
-            return []
+                series.append({
+                    'date': day_str,
+                    'value': float(value),
+                    'is_inferred': not is_known,
+                })
+            return series
 
-        # Anchor stock portion to today's stock value, then add cash as a flat offset.
-        scale = stock_total / float(growth.iloc[-1])
-        values = growth * scale + total_cash
+        known_days = sorted(set(balance_map.keys()) | set(snapshot_map.keys()))
+        start_filter = self._period_start(timeframe)
 
-        seen = set()
         series = []
-        for dt, value in values.items():
-            if pd.isna(value):
+        for day_str in known_days:
+            try:
+                day = datetime.strptime(day_str, '%Y-%m-%d').date()
+            except ValueError:
                 continue
-            # For intraday intervals preserve HH:MM precision; daily uses date only.
-            dt_str = str(dt)[:16] if intraday else str(dt)[:10]
-            if dt_str in seen:
+            if start_filter and day < start_filter:
                 continue
-            seen.add(dt_str)
-            date_str = dt_str[:10]  # always the date portion for snapshot/start comparisons
 
-            # Stored snapshot takes priority (true historical accuracy).
-            if dt_str in snapshots:
-                series.append({'date': dt_str, 'value': float(snapshots[dt_str])})
-            elif start_str and date_str < start_str:
-                # Before any position was opened — show pre-buy cash as flat line.
-                series.append({'date': dt_str, 'value': float(flat_line_value)})
+            if day_str in balance_map:
+                value = balance_map[day_str]
             else:
-                series.append({'date': dt_str, 'value': float(value)})
+                value = snapshot_map.get(day_str)
+            series.append({'date': day_str, 'value': value})
 
         return series
 
